@@ -188,6 +188,90 @@ def cmd_monthly(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_verified_usage(provider: str, match: str) -> None:
+    """Refresh usage and print the matched account's line as login verification."""
+    print(dim("verifying usage with the new credentials..."))
+    if provider == "claude":
+        accounts, _ = claude.load_accounts(refresh=True)
+        for acct in accounts:
+            if acct.num == match or acct.email == match:
+                print(f"  {acct.email}: {'  '.join(_claude_usage_cells(acct.usage))}")
+                return
+    else:
+        for acct in codex.load_accounts(refresh=True):
+            if acct.email == match:
+                print(f"  {acct.email}: {'  '.join(_codex_usage_cells(acct))}")
+                return
+    print(dim("  account not found after login"))
+
+
+def _login_codex(stay: bool) -> int:
+    prev = next((a.email for a in codex.load_accounts(refresh=False) if a.active), None)
+    print("Opening the OpenAI login page in your browser — sign in with the account to (re-)authenticate.")
+    rc = subprocess.run(["codex-auth", "login"]).returncode
+    if rc != 0:
+        return rc
+
+    new = next((a.email for a in codex.load_accounts(refresh=False) if a.active), None)
+    if not stay and prev and new and new != prev:
+        print(dim(f"restoring active account: {prev}"))
+        subprocess.run(["codex-auth", "switch", prev], stdout=subprocess.DEVNULL)
+    if new:
+        _print_verified_usage("codex", new)
+    return 0
+
+
+def _login_claude(query: str | None, stay: bool) -> int:
+    accounts, _ = claude.load_accounts(refresh=False)
+    if not accounts:
+        print("no claude-swap accounts found — run `cswap --add-account` first", file=sys.stderr)
+        return 1
+
+    active = next((a for a in accounts if a.active), None)
+    if query:
+        target = next(
+            (a for a in accounts if a.num == query or a.email == query),
+            None,
+        ) or next((a for a in accounts if query.lower() in a.email.lower()), None)
+        if target is None:
+            print(f"no claude account matches {query!r}", file=sys.stderr)
+            return 1
+    else:
+        target = active
+        if target is None:
+            print("no active claude account; pass a slot number or email", file=sys.stderr)
+            return 1
+
+    swapped = active is None or target.num != active.num
+    if swapped:
+        print(dim(f"switching active Claude account to slot {target.num} ({target.email})"))
+        rc = subprocess.run(["cswap", "--switch-to", target.num]).returncode
+        if rc != 0:
+            return rc
+
+    print()
+    print(bold(f"Claude Code will open — sign in as {cyan(target.email)}."))
+    print("If login doesn't start automatically, type /login. When done, exit Claude Code (/exit).")
+    print()
+    subprocess.run(["claude", "/login"])
+
+    if swapped and not stay and active is not None:
+        print(dim(f"restoring active account: slot {active.num} ({active.email})"))
+        rc = subprocess.run(["cswap", "--switch-to", active.num]).returncode
+        if rc != 0:
+            print("warning: failed to switch back — check `cswap --list`", file=sys.stderr)
+    _print_verified_usage("claude", target.num)
+    return 0
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    if args.provider == "codex":
+        if args.query:
+            print(dim("note: for codex the account is chosen in the browser; query ignored"))
+        return _login_codex(stay=args.stay)
+    return _login_claude(args.query, stay=args.stay)
+
+
 def cmd_switch(args: argparse.Namespace) -> int:
     if args.provider == "claude":
         cmd = ["cswap", "--switch-to", args.query] if args.query else ["cswap", "--switch"]
@@ -219,6 +303,23 @@ def main(argv: list[str] | None = None) -> int:
     monthly_parser = sub.add_parser("monthly", help="Monthly token/cost table for both providers")
     monthly_parser.add_argument("--last", type=int, default=None, help="Only show the last N months")
     monthly_parser.set_defaults(func=cmd_monthly)
+
+    login_parser = sub.add_parser(
+        "login",
+        help="Re-authenticate an account: opens the provider login page, then restores your active account",
+    )
+    login_parser.add_argument("provider", choices=["claude", "codex"])
+    login_parser.add_argument(
+        "query",
+        nargs="?",
+        help="Claude slot number or email to re-auth (codex: account is chosen in the browser)",
+    )
+    login_parser.add_argument(
+        "--stay",
+        action="store_true",
+        help="Keep the freshly logged-in account active instead of restoring the previous one",
+    )
+    login_parser.set_defaults(func=cmd_login)
 
     switch_parser = sub.add_parser("switch", help="Switch active account (delegates to cswap/codex-auth)")
     switch_parser.add_argument("provider", choices=["claude", "codex"])

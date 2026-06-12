@@ -25,7 +25,22 @@ ccc monthly              # month-by-month token/cost table for Claude + Codex co
 ccc monthly --last 6     # only the last 6 months
 ccc switch claude 2      # delegate to `cswap --switch-to 2`
 ccc switch codex mqvu    # delegate to `codex-auth switch mqvu`
+
+ccc login codex          # open the OpenAI login page; pick the account in the browser
+ccc login claude 3       # re-auth Claude slot 3 (or pass an email / substring)
+ccc login claude         # re-auth the currently active Claude account
 ```
+
+`ccc login` handles the whole re-auth dance: for Claude it swaps the target
+slot in (`cswap --switch-to`), launches `claude /login` so the browser login
+page opens, swaps your previous account back in afterwards (which also backs
+up the fresh credentials), and verifies by fetching live usage. For Codex it
+runs `codex-auth login` and restores your previously active account after.
+Pass `--stay` to keep the freshly logged-in account active instead.
+
+> Heads-up: re-authing a non-active Claude slot briefly swaps the keychain
+> credentials. Running Claude Code sessions keep their in-memory tokens, but
+> avoid doing this while a session is mid-token-refresh.
 
 ## How it works
 
