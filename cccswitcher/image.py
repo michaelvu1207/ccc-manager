@@ -66,13 +66,49 @@ def art_lines() -> list[str] | None:
     return _art_cache or None
 
 
-def emit_art(row: int, col: int) -> bool:
-    """Draw the half-block mascot at 1-based (row, col). Best-effort."""
+def art_size() -> tuple[int, int]:
+    """(cols, rows) of the half-block art, ignoring SGR codes. (0, 0) if absent."""
+    lines = art_lines()
+    if not lines:
+        return (0, 0)
+    import re
+
+    cols = max(len(re.sub(r"\x1b\[[0-9;]*m", "", line)) for line in lines)
+    return (cols, len(lines))
+
+
+def _clip_visible(line: str, max_cols: int) -> str:
+    """Truncate a line to max_cols *visible* characters, keeping SGR codes."""
+    import re
+
+    out, shown, i = [], 0, 0
+    for m in re.finditer(r"\x1b\[[0-9;]*m|.", line):
+        tok = m.group()
+        if tok.startswith("\x1b"):
+            out.append(tok)
+        else:
+            if shown >= max_cols:
+                break
+            out.append(tok)
+            shown += 1
+    return "".join(out)
+
+
+def emit_art(row: int, col: int, max_cols: int | None = None, max_rows: int | None = None) -> bool:
+    """Draw the half-block mascot at 1-based (row, col), clipped to the box.
+
+    max_cols / max_rows bound it to the icon box interior so a narrow terminal
+    can't bleed the art into neighbouring panels. Best-effort; never raises.
+    """
     lines = art_lines()
     if not lines:
         return False
+    if max_rows is not None:
+        lines = lines[:max_rows]
     out = ["\0337"]  # save cursor
     for i, line in enumerate(lines):
+        if max_cols is not None:
+            line = _clip_visible(line, max_cols)
         out.append(f"\033[{row + i};{col}H{line}\033[0m")
     out.append("\0338")  # restore cursor
     try:

@@ -14,7 +14,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "assets" / "ccc-mascot.png"
 OUT = ROOT / "cccswitcher" / "assets" / "icon_art.txt"
-SIZE = "32x16"  # max tile in character cells; chafa keeps aspect ratio
+SIZE = "64x32"  # max tile in character cells; chafa keeps aspect ratio
 
 
 def main() -> None:

@@ -82,6 +82,7 @@ class App:
         self.sel = 0
         self._last_shape: tuple | None = None
         self._icon_mode = "ascii"  # "image" | "art" | "ascii"
+        self._art_size = (0, 0)
 
     # ---------- data ----------
 
@@ -412,8 +413,10 @@ class App:
 
     def _layout(self, w: int) -> dict:
         acc_rows = len(self.claude_entries) + len(self.codex_entries) + 2
-        box_h = max(acc_rows + 2, 15)  # >= 15 so the 13-row icon art fits
-        icon_w = 34
+        art_cols, art_rows = self._art_size
+        # Icon box hugs the art (+2 border) but always leaves room for accounts.
+        icon_w = min(art_cols + 2, max(24, w - 44)) if art_cols else 22
+        box_h = max(acc_rows + 2, (art_rows + 2) if art_rows else 12)
         acc_left = 2 + icon_w + 2
         return {
             "box_top": 2, "box_h": box_h, "icon_left": 2, "icon_w": icon_w,
@@ -454,7 +457,8 @@ class App:
         if self._icon_mode == "image":
             image.emit(L["box_top"] + 2, L["icon_left"] + 2, L["icon_w"] - 2, L["box_h"] - 2)
         elif self._icon_mode == "art":
-            image.emit_art(L["box_top"] + 2, L["icon_left"] + 2)
+            image.emit_art(L["box_top"] + 2, L["icon_left"] + 2,
+                           max_cols=L["icon_w"] - 2, max_rows=L["box_h"] - 2)
 
     # ---------- main loop ----------
 
@@ -464,6 +468,7 @@ class App:
         if curses.has_colors():
             theme.setup()
         from . import image
+        self._art_size = image.art_size()
         if image.supported():
             self._icon_mode = "image"      # real PNG on iTerm2 / WezTerm
         elif image.art_lines():
