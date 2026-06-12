@@ -17,11 +17,14 @@ import sys
 try:
     from importlib.resources import files
 
-    _ICON = files("cccswitcher.assets").joinpath("icon.png")
+    _ASSETS = files("cccswitcher.assets")
+    _ICON = _ASSETS.joinpath("icon.png")
+    _ART = _ASSETS.joinpath("icon_art.txt")
 except Exception:  # pragma: no cover - importlib edge cases
-    _ICON = None
+    _ICON = _ART = None
 
 _b64_cache: str | None = None
+_art_cache: list[str] | None = None
 
 
 def supported() -> bool:
@@ -46,6 +49,38 @@ def _icon_b64() -> str | None:
         return None
     _b64_cache = base64.b64encode(data).decode("ascii")
     return _b64_cache
+
+
+def art_lines() -> list[str] | None:
+    """Pre-rendered half-block ANSI art for the mascot (works in any terminal,
+    including Terminal.app and Warp). None if the asset is unavailable."""
+    global _art_cache
+    if _art_cache is not None:
+        return _art_cache or None
+    if _ART is None:
+        return None
+    try:
+        _art_cache = _ART.read_text(encoding="utf-8").splitlines()
+    except (OSError, AttributeError):
+        _art_cache = []
+    return _art_cache or None
+
+
+def emit_art(row: int, col: int) -> bool:
+    """Draw the half-block mascot at 1-based (row, col). Best-effort."""
+    lines = art_lines()
+    if not lines:
+        return False
+    out = ["\0337"]  # save cursor
+    for i, line in enumerate(lines):
+        out.append(f"\033[{row + i};{col}H{line}\033[0m")
+    out.append("\0338")  # restore cursor
+    try:
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def emit(row: int, col: int, cols: int, rows: int) -> bool:

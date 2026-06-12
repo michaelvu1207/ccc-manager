@@ -81,7 +81,7 @@ class App:
         self.dirty = True
         self.sel = 0
         self._last_shape: tuple | None = None
-        self._image_ok = False
+        self._icon_mode = "ascii"  # "image" | "art" | "ascii"
 
     # ---------- data ----------
 
@@ -259,8 +259,8 @@ class App:
     def _draw_icon(self, stdscr, top, left, width, height):
         """Top-left app icon: an inline image where supported, else ASCII."""
         self._box(stdscr, top, left, width, height, "")
-        if self._image_ok:
-            return  # the PNG is emitted after doupdate, into this box
+        if self._icon_mode in ("image", "art"):
+            return  # emitted after doupdate, into this box
         midy = top + height // 2
         for dy, text, role, bold in (
             (-2, "꒰ ◕‿◕ ꒱", "danger", True),
@@ -412,7 +412,7 @@ class App:
 
     def _layout(self, w: int) -> dict:
         acc_rows = len(self.claude_entries) + len(self.codex_entries) + 2
-        box_h = max(acc_rows + 2, 11)
+        box_h = max(acc_rows + 2, 12)  # >= 12 so the 10-row icon art fits
         icon_w = 22
         acc_left = 2 + icon_w + 2
         return {
@@ -448,10 +448,13 @@ class App:
         stdscr.noutrefresh()
         curses.doupdate()
 
-        # Inline icon image, after curses has painted the frame.
-        if self._image_ok:
-            from . import image
+        # Icon, after curses has painted the frame (curses doesn't know these
+        # pixels, so re-emit each repaint — repaints only happen on input).
+        from . import image
+        if self._icon_mode == "image":
             image.emit(L["box_top"] + 2, L["icon_left"] + 2, L["icon_w"] - 2, L["box_h"] - 2)
+        elif self._icon_mode == "art":
+            image.emit_art(L["box_top"] + 2, L["icon_left"] + 2)
 
     # ---------- main loop ----------
 
@@ -461,7 +464,12 @@ class App:
         if curses.has_colors():
             theme.setup()
         from . import image
-        self._image_ok = image.supported()
+        if image.supported():
+            self._icon_mode = "image"      # real PNG on iTerm2 / WezTerm
+        elif image.art_lines():
+            self._icon_mode = "art"        # half-block art everywhere else
+        else:
+            self._icon_mode = "ascii"      # last-ditch text face
 
         # Paint cached data immediately, then refresh live usage behind it.
         self.refresh_async(refresh=False, then_refresh=True)
