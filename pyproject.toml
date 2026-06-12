@@ -1,9 +1,19 @@
 [project]
 name = "cccswitcher"
-version = "0.5.0"
-description = "Combined Claude (cswap) + Codex (codex-auth) account list, live usage, and monthly cost via ccusage"
+version = "0.6.0"
+description = "A pretty terminal dashboard for switching between Claude Code and Codex accounts, with live usage and spend."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Michael Vu" }]
+keywords = ["claude", "codex", "tui", "account-switcher", "usage", "cli"]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/maikyon/cccswitcher"
+Repository = "https://github.com/maikyon/cccswitcher"
+Issues = "https://github.com/maikyon/cccswitcher/issues"
 
 [project.scripts]
 ccc = "cccswitcher.cli:main"

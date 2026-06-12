@@ -11,20 +11,27 @@ they can be pasted straight into the provider's account picker.
 from __future__ import annotations
 
 import curses
-import re
+import locale
 import threading
 from dataclasses import dataclass
 
-from . import actions, claude, codex, monthly
-from .render import fmt_duration, fmt_money, fmt_tokens
+from . import actions, claude, codex, monthly, theme
+from .render import fmt_countdown, fmt_duration, fmt_money, fmt_tokens
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+HINTS = [
+    ("↑/↓", "move"),
+    ("enter", "switch / login"),
+    ("l", "re-login"),
+    ("r", "refresh"),
+    ("q", "quit"),
+]
 
-KEY_HINTS = "↑↓ move · enter switch/login · l re-login · r refresh · q quit"
 
-
-def _plain(text: str) -> str:
-    return _ANSI_RE.sub("", text)
+@dataclass
+class Window:
+    label: str
+    pct: float | None
+    left: str  # human countdown, e.g. "2h 15m left"
 
 
 @dataclass
@@ -41,12 +48,26 @@ class Entry:
     def active(self) -> bool:
         return self.acct.active
 
-    def usage_text(self) -> str:
+    def windows(self) -> list[Window]:
+        """Two rate-limit windows (5h + weekly) as structured data for bars."""
+        usage = getattr(self.acct, "usage", None)
+        if not isinstance(usage, dict):
+            return []
         if self.provider == "claude":
-            cells = actions.claude_usage_cells(self.acct.usage)
-        else:
-            cells = actions.codex_usage_cells(self.acct)
-        return _plain("  ".join(cells))
+            out = []
+            for key, label in (("five_hour", "5h"), ("seven_day", "wk")):
+                w = usage.get(key)
+                if w:
+                    cd = w.get("countdown", "")
+                    out.append(Window(label, w.get("pct"), f"{cd} left" if cd else ""))
+            return out
+        out = []
+        for key, label, style in (("primary", "5h", "hm"), ("secondary", "wk", "dh")):
+            w = usage.get(key)
+            if w:
+                cd = fmt_countdown(w.get("resets_at"), style=style)
+                out.append(Window(label, w.get("used_percent"), f"{cd} left" if cd else ""))
+        return out
 
 
 class App:
@@ -59,6 +80,7 @@ class App:
         self.refreshing = False
         self.dirty = True
         self.sel = 0
+        self._last_shape: tuple | None = None
 
     # ---------- data ----------
 
@@ -103,7 +125,7 @@ class App:
         with self.lock:
             self.claude_entries = claude_entries
             self.codex_entries = codex_entries
-            self.status = "loading usage stats..." if not self.stats else ""
+            self.status = "loading usage stats…" if not self.stats else ""
             self.dirty = True
 
         threads["claude_stats"].join()
@@ -114,7 +136,7 @@ class App:
                 "codex": results.get("codex_stats"),
             }
             self.refreshing = False
-            self.status = "" if refresh else "cached data — refreshing live usage..."
+            self.status = "" if refresh else "cached data — refreshing live usage…"
             self.dirty = True
         if then_refresh:
             self.refresh_async(refresh=True)
@@ -127,7 +149,7 @@ class App:
                 return
             self.refreshing = True
             if refresh:
-                self.status = "refreshing live usage..."
+                self.status = "refreshing live usage…"
         threading.Thread(
             target=self._load, args=(refresh, then_refresh, force_stats), daemon=True
         ).start()
@@ -139,13 +161,13 @@ class App:
 
     def _run_in_terminal(self, stdscr, fn) -> None:
         curses.endwin()
-        print("\n" + "=" * 64)
+        print("\n" + "═" * 64)
         try:
             fn()
         except Exception as e:  # keep the TUI alive whatever the flow does
             print(f"error: {e}")
         try:
-            input("\npress Enter to return to ccc...")
+            input("\npress Enter to return to ccc…")
         except EOFError:
             pass
         stdscr.clear()
@@ -176,122 +198,225 @@ class App:
         if rc == 0:
             self.refresh_async(refresh=False)
 
-    # ---------- drawing ----------
+    # ---------- low-level drawing ----------
 
     @staticmethod
-    def _addstr(stdscr, y: int, x: int, text: str, attr: int = 0) -> None:
+    def _put(stdscr, y: int, x: int, text: str, attr: int = 0) -> int:
+        """Draw clipped text, returning the x just past it."""
         h, w = stdscr.getmaxyx()
-        if y < 0 or y >= h or x >= w:
-            return
+        if y < 0 or y >= h or x >= w - 1:
+            return x
+        text = text[: w - 1 - x]
         try:
-            stdscr.addstr(y, x, text[: w - x - 1], attr)
+            stdscr.addstr(y, x, text, attr)
         except curses.error:
             pass
+        return x + len(text)
 
-    def _draw_accounts(self, stdscr, y: int) -> int:
-        sections = [
-            ("Claude (cswap)", self.claude_entries),
-            ("Codex (codex-auth)", self.codex_entries),
+    def _segs(self, stdscr, y: int, x: int, segments: list[tuple[str, int]]) -> int:
+        for text, attr in segments:
+            x = self._put(stdscr, y, x, text, attr)
+        return x
+
+    def _box(self, stdscr, top: int, left: int, width: int, height: int,
+             title: str, title_role: str = "title") -> None:
+        """Draw a rounded box with an embedded title."""
+        b = theme.attr("border")
+        right = left + width - 1
+        bottom = top + height - 1
+        # corners + edges
+        self._put(stdscr, top, left, theme.TL + theme.HZ * (width - 2) + theme.TR, b)
+        self._put(stdscr, bottom, left, theme.BL + theme.HZ * (width - 2) + theme.BR, b)
+        for yy in range(top + 1, bottom):
+            self._put(stdscr, yy, left, theme.VT, b)
+            self._put(stdscr, yy, right, theme.VT, b)
+        if title:
+            self._segs(stdscr, top, left + 2, [
+                (theme.HZ + " ", b),
+                (title, theme.attr(title_role, bold=True)),
+                (" " + theme.HZ, b),
+            ])
+
+    # ---------- panels ----------
+
+    def _draw_header(self, stdscr, top: int, left: int, width: int) -> int:
+        self._box(stdscr, top, left, width, 3, "CCC · Claude + Codex Switcher")
+        inner = left + 2
+        c, l = self._n_claude(), self._n_codex()
+        active = self._active_summary()
+        segs = [
+            (theme.DOT + " ", theme.attr("good")),
+            (f"{c} Claude", theme.attr("text", bold=True)),
+            ("    " + theme.DOT + " ", theme.attr("value")),
+            (f"{l} Codex", theme.attr("text", bold=True)),
         ]
-        flat_index = 0
-        for title, entries in sections:
-            self._addstr(stdscr, y, 1, title, curses.A_BOLD)
-            y += 1
-            if not entries:
-                self._addstr(stdscr, y, 3, "no accounts found", curses.A_DIM)
-                y += 1
-            width = max((len(e.email) for e in entries), default=0)
-            for entry in entries:
-                selected = flat_index == self.sel
-                marker = "*" if entry.active else " "
-                badge = "  ⚠ needs login" if entry.needs_login else ""
-                line = f" {marker} {entry.acct.num:>2}  {entry.email:<{width}}  {entry.usage_text()}{badge}"
-                attr = curses.A_REVERSE if selected else 0
-                if entry.active and not selected:
-                    attr |= curses.color_pair(1)
-                if entry.needs_login and not selected:
-                    attr |= curses.color_pair(2)
-                self._addstr(stdscr, y, 1, line.ljust(stdscr.getmaxyx()[1] - 3), attr)
-                y += 1
-                flat_index += 1
-            y += 1
-        return y
+        if active:
+            segs += [("    " + theme.DIAMOND + " active: ", theme.attr("label")),
+                     (active, theme.attr("value"))]
+        self._segs(stdscr, top + 1, inner, segs)
+        return top + 3
 
-    def _draw_stats(self, stdscr, y: int) -> int:
-        self._addstr(
-            stdscr,
-            y,
-            1,
-            "Usage — local logs, all accounts combined",
-            curses.A_BOLD,
-        )
-        y += 1
+    def _n_claude(self) -> int:
+        return len(self.claude_entries)
 
-        month_keys: list[str] = sorted(
+    def _n_codex(self) -> int:
+        return len(self.codex_entries)
+
+    def _active_summary(self) -> str:
+        names = []
+        for e in self.entries():
+            if e.active:
+                names.append(e.email.split("@")[0])
+        return " / ".join(names)
+
+    def _draw_accounts(self, stdscr, top: int, left: int, width: int) -> tuple[int, int]:
+        sections = [("CLAUDE", self.claude_entries), ("CODEX", self.codex_entries)]
+        rows = sum(len(e) for _, e in sections) + len(sections)
+        height = rows + 2
+        self._box(stdscr, top, left, width, height, "Accounts")
+
+        inner = left + 2
+        email_w = max((len(e.email) for e in self.entries()), default=10)
+        email_w = min(email_w, max(12, width - 40))
+        y = top + 1
+        flat = 0
+        for label, entries in sections:
+            self._put(stdscr, y, inner, label, theme.attr("muted", bold=True))
+            y += 1
+            for e in entries:
+                self._draw_account_row(stdscr, y, inner, width, e, flat == self.sel, email_w)
+                y += 1
+                flat += 1
+        return top + height, height
+
+    def _draw_account_row(self, stdscr, y, inner, width, e: Entry, selected, email_w):
+        accent_attr = theme.attr("accent", bold=True)
+        self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ", accent_attr)
+
+        dot_attr = theme.attr("good") if e.active else theme.attr("muted")
+        email_attr = theme.attr("text", bold=True) if selected else theme.attr("text")
+        if e.active:
+            email_attr = theme.attr("good", bold=selected)
+
+        email = e.email if len(e.email) <= email_w else e.email[: email_w - 1] + "…"
+        x = self._segs(stdscr, y, inner + 1, [
+            (theme.DOT + " ", dot_attr),
+            (f"{e.acct.num:>2}  ", theme.attr("muted")),
+            (f"{email:<{email_w}}  ", email_attr),
+        ])
+
+        if e.needs_login:
+            self._segs(stdscr, y, x, [
+                (theme.WARN + " ", theme.attr("danger", bold=True)),
+                ("needs login", theme.attr("danger")),
+            ])
+            return
+
+        windows = e.windows()
+        if not windows:
+            self._put(stdscr, y, x, "usage unavailable", theme.attr("muted"))
+            return
+        for w in windows:
+            bar_str, role = theme.bar(w.pct)
+            pct = f"{round(w.pct):>3}%" if w.pct is not None else "  ?"
+            x = self._segs(stdscr, y, x, [
+                (f"{w.label} ", theme.attr("label")),
+                (bar_str + " ", theme.attr(role)),
+                (pct + "  ", theme.attr(role, bold=True)),
+                (f"{w.left:<13}" if w.left else " " * 13, theme.attr("muted")),
+            ])
+            x += 1
+
+    def _draw_stats(self, stdscr, top: int, left: int, width: int) -> int:
+        month_keys = sorted(
             {m.month for s in self.stats.values() if s for m in s.months}
         )[-3:]
-        header = f"  {'':<8}{'last 7d':>20}{'last 30d':>20}" + "".join(
-            f"{mk:>12}" for mk in month_keys
-        )
-        self._addstr(stdscr, y, 1, header, curses.A_DIM)
-        y += 1
+        stale = next((s for s in self.stats.values() if s and s.stale), None)
+        height = 4 + 2 + (1 if stale else 0)
+        self._box(stdscr, top, left, width, height, "Usage · all accounts, this machine")
+        inner = left + 2
+
+        col = 11
+        mcol = 11
+        lablabel = f"{'':<10}"
+        header = f"{lablabel}{'last 7d':>{col}}{'last 30d':>{col}}"
+        for mk in month_keys:
+            header += f"{_month_short(mk):>{mcol}}"
+        self._put(stdscr, top + 1, inner, header, theme.attr("label"))
 
         totals = {"7d": 0.0, "30d": 0.0}
         month_totals = {mk: 0.0 for mk in month_keys}
-        for name, key in (("Claude", "claude"), ("Codex", "codex")):
-            stats = self.stats.get(key)
-            if stats is None:
-                self._addstr(stdscr, y, 1, f"  {name:<8}{'(ccusage unavailable)':>20}", curses.A_DIM)
+        y = top + 2
+        for name, key, role in (("Claude", "claude", "value"), ("Codex", "codex", "value")):
+            s = self.stats.get(key)
+            if s is None:
+                self._segs(stdscr, y, inner, [
+                    (f"{name:<10}", theme.attr("text")),
+                    ("collecting…", theme.attr("muted")),
+                ])
                 y += 1
                 continue
-            totals["7d"] += stats.last7_cost
-            totals["30d"] += stats.last30_cost
-            by_month = {m.month: m for m in stats.months}
-            cells = (
-                f"  {name:<8}"
-                f"{fmt_money(stats.last7_cost) + ' · ' + fmt_tokens(stats.last7_tokens):>20}"
-                f"{fmt_money(stats.last30_cost) + ' · ' + fmt_tokens(stats.last30_tokens):>20}"
-            )
+            totals["7d"] += s.last7_cost
+            totals["30d"] += s.last30_cost
+            by_month = {m.month: m for m in s.months}
+            line = f"{fmt_money(s.last7_cost):>{col}}{fmt_money(s.last30_cost):>{col}}"
             for mk in month_keys:
                 row = by_month.get(mk)
                 if row:
                     month_totals[mk] += row.cost
-                cells += f"{fmt_money(row.cost) if row else '--':>12}"
-            self._addstr(stdscr, y, 1, cells)
+                line += f"{(fmt_money(row.cost) if row else '—'):>{mcol}}"
+            self._segs(stdscr, y, inner, [
+                (f"{name:<10}", theme.attr("text", bold=True)),
+                (line, theme.attr(role)),
+            ])
             y += 1
 
-        total_line = (
-            f"  {'Total':<8}"
-            f"{fmt_money(totals['7d']):>20}"
-            f"{fmt_money(totals['30d']):>20}"
-        ) + "".join(f"{fmt_money(month_totals[mk]):>12}" for mk in month_keys)
-        self._addstr(stdscr, y, 1, total_line, curses.A_BOLD)
+        tline = f"{fmt_money(totals['7d']):>{col}}{fmt_money(totals['30d']):>{col}}"
+        for mk in month_keys:
+            tline += f"{fmt_money(month_totals[mk]):>{mcol}}"
+        self._segs(stdscr, y, inner, [
+            (f"{'Total':<10}", theme.attr("title", bold=True)),
+            (tline, theme.attr("title", bold=True)),
+        ])
         y += 1
-
-        stale = next((s for s in self.stats.values() if s and s.stale), None)
         if stale is not None:
-            note = f"  (cached {fmt_duration(stale.age_seconds)} ago; recompute failed — press r to retry)"
-            self._addstr(stdscr, y, 1, note, curses.A_DIM)
-            y += 1
-        return y
+            self._put(stdscr, y, inner,
+                      f"cached {fmt_duration(stale.age_seconds)} ago · recompute failed, press r to retry",
+                      theme.attr("warn"))
+        return top + height
+
+    def _draw_footer(self, stdscr, y: int, left: int, width: int) -> None:
+        with self.lock:
+            status, refreshing = self.status, self.refreshing
+        if status:
+            role = "warn" if refreshing else "muted"
+            self._put(stdscr, y - 1, left, status, theme.attr(role))
+        x = left
+        for i, (key, desc) in enumerate(HINTS):
+            if i:
+                x = self._put(stdscr, y, x, f"  {theme.BULLET}  ", theme.attr("border"))
+            x = self._put(stdscr, y, x, key, theme.attr("value", bold=True))
+            x = self._put(stdscr, y, x, " " + desc, theme.attr("muted"))
 
     def _draw(self, stdscr) -> None:
-        stdscr.erase()
-        h, _ = stdscr.getmaxyx()
-        self._addstr(stdscr, 0, 1, "CCCSwitcher", curses.A_BOLD | curses.color_pair(1))
-        self._addstr(stdscr, 0, 14, KEY_HINTS, curses.A_DIM)
-
-        y = self._draw_accounts(stdscr, 2)
-        y = self._draw_stats(stdscr, y)
-
-        with self.lock:
-            status = self.status
-            refreshing = self.refreshing
-        if refreshing and not status:
-            status = "refreshing..."
-        if status:
-            attr = curses.color_pair(3) if refreshing else curses.A_DIM
-            self._addstr(stdscr, h - 1, 1, status, attr)
+        # Full clear only when the layout shape changes (accounts/stats arriving
+        # after the first paint), so growing panels don't leave stale cells;
+        # steady-state frames use erase() to avoid flicker.
+        shape = (len(self.claude_entries), len(self.codex_entries), bool(self.stats),
+                 stdscr.getmaxyx())
+        if shape != self._last_shape:
+            stdscr.clear()
+            self._last_shape = shape
+        else:
+            stdscr.erase()
+        h, w = stdscr.getmaxyx()
+        left, width = 1, max(20, w - 2)
+        y = self._draw_header(stdscr, 0, left, width) + 1
+        y, _ = self._draw_accounts(stdscr, y, left, width)
+        y += 1
+        if self.stats:
+            y = self._draw_stats(stdscr, y, left, width) + 1
+        self._draw_footer(stdscr, h - 1, left, width)
         stdscr.noutrefresh()
         curses.doupdate()
 
@@ -300,22 +425,16 @@ class App:
     def main(self, stdscr) -> None:
         curses.curs_set(0)
         stdscr.timeout(150)
-        curses.start_color()
-        curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_CYAN, -1)
-        curses.init_pair(2, curses.COLOR_RED, -1)
-        curses.init_pair(3, curses.COLOR_YELLOW, -1)
+        if curses.has_colors():
+            theme.setup()
 
         # Paint cached data immediately, then refresh live usage behind it.
         self.refresh_async(refresh=False, then_refresh=True)
 
         while True:
             with self.lock:
-                if self.dirty:
-                    self.dirty = False
-                    redraw = True
-                else:
-                    redraw = False
+                redraw = self.dirty
+                self.dirty = False
             if redraw:
                 self._draw(stdscr)
 
@@ -343,6 +462,17 @@ class App:
                 self._login(stdscr, entries[min(self.sel, len(entries) - 1)], stay=False)
 
 
+def _month_short(mk: str) -> str:
+    """'2026-06' -> 'Jun'."""
+    months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    try:
+        return months[int(mk.split("-")[1])]
+    except (IndexError, ValueError):
+        return mk
+
+
 def run() -> int:
+    locale.setlocale(locale.LC_ALL, "")
     curses.wrapper(App().main)
     return 0
