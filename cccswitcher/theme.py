@@ -61,11 +61,15 @@ def attr(role: str, bold: bool = False, dim: bool = False) -> int:
     return a
 
 
-def bar(pct: float | None, width: int = 5) -> tuple[str, str]:
-    """Return (bar_string, severity_role) for a 0-100 utilisation percent."""
-    if pct is None:
-        return DOT * 0 + BAR_EMPTY * width, "muted"
-    pct = max(0.0, min(100.0, pct))
-    filled = round(pct / 100 * width)
-    role = "good" if pct < 70 else "warn" if pct < 90 else "danger"
+def bar(remaining: float | None, width: int = 5) -> tuple[str, str]:
+    """Return (bar_string, severity_role) for a 0-100 *remaining* percent.
+
+    The bar reads like a fuel gauge: a full green bar means lots of headroom
+    left, draining to red as the window is used up.
+    """
+    if remaining is None:
+        return BAR_EMPTY * width, "muted"
+    remaining = max(0.0, min(100.0, remaining))
+    filled = round(remaining / 100 * width)
+    role = "good" if remaining > 50 else "warn" if remaining > 20 else "danger"
     return BAR_FULL * filled + BAR_EMPTY * (width - filled), role

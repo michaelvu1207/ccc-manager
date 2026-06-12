@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 
 from . import claude, codex
-from .render import bold, cyan, dim, fmt_age, fmt_countdown, pct_colored
+from .render import bold, cyan, dim, fmt_age, fmt_countdown, pct_left_colored
 
 USAGE_STALE_SECONDS = 600
 
@@ -23,13 +23,13 @@ def claude_usage_cells(usage: dict | str | None) -> list[str]:
     h5 = usage.get("five_hour")
     if h5:
         left = h5.get("countdown", "")
-        suffix = dim(f" ({left} left)") if left else ""
-        cells.append(f"5h {pct_colored(h5.get('pct'))}{suffix}")
+        suffix = dim(f" · resets in {left}") if left else ""
+        cells.append(f"5h {pct_left_colored(h5.get('pct'))}{suffix}")
     d7 = usage.get("seven_day")
     if d7:
         left = d7.get("countdown", "")
-        suffix = dim(f" ({left} left)") if left else ""
-        cells.append(f"7d {pct_colored(d7.get('pct'))}{suffix}")
+        suffix = dim(f" · resets in {left}") if left else ""
+        cells.append(f"7d {pct_left_colored(d7.get('pct'))}{suffix}")
     return cells or [dim("no usage data")]
 
 
@@ -41,13 +41,13 @@ def codex_usage_cells(acct: codex.CodexAccount) -> list[str]:
     primary = acct.usage.get("primary")
     if primary:
         left = fmt_countdown(primary.get("resets_at"), style="hm")
-        suffix = dim(f" ({left} left)") if left else ""
-        cells.append(f"5h {pct_colored(primary.get('used_percent'))}{suffix}")
+        suffix = dim(f" · resets in {left}") if left else ""
+        cells.append(f"5h {pct_left_colored(primary.get('used_percent'))}{suffix}")
     secondary = acct.usage.get("secondary")
     if secondary:
         left = fmt_countdown(secondary.get("resets_at"), style="dh")
-        suffix = dim(f" ({left} left)") if left else ""
-        cells.append(f"wk {pct_colored(secondary.get('used_percent'))}{suffix}")
+        suffix = dim(f" · resets in {left}") if left else ""
+        cells.append(f"wk {pct_left_colored(secondary.get('used_percent'))}{suffix}")
 
     now = datetime.now().timestamp()
     if acct.usage_at and now - acct.usage_at > USAGE_STALE_SECONDS:

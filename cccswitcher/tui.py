@@ -319,8 +319,9 @@ class App:
             self._segs_clip(stdscr, y, inner + 1, right, segs)
             return
         for w in windows:
-            bar_str, role = theme.bar(w.pct)
-            pct = f"{round(w.pct):>3}%" if w.pct is not None else "  ?"
+            remaining = None if w.pct is None else 100 - w.pct
+            bar_str, role = theme.bar(remaining)
+            pct = f"{round(remaining):>3}% left" if remaining is not None else "   ? left"
             segs += [
                 (f"{w.label} ", theme.attr("label")),
                 (bar_str + " ", theme.attr(role)),

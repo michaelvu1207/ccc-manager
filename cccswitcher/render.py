@@ -39,14 +39,15 @@ def cyan(text: str) -> str:
     return _ansi("36", text)
 
 
-def pct_colored(pct: float | None) -> str:
-    """Render a utilization percent with severity color."""
-    if pct is None:
-        return dim("  --")
-    label = f"{round(pct):>3d}%"
-    if pct >= 90:
+def pct_left_colored(used: float | None) -> str:
+    """Render the *remaining* percent (100 - used) with fuel-gauge color."""
+    if used is None:
+        return dim("  -- left")
+    remaining = max(0, 100 - round(used))
+    label = f"{remaining:>3d}% left"
+    if remaining <= 10:
         return red(label)
-    if pct >= 70:
+    if remaining <= 30:
         return yellow(label)
     return green(label)
 
