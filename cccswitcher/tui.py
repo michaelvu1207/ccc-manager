@@ -286,7 +286,7 @@ class App:
         for label, prole, entries in sections:
             if y >= top + height - 1:
                 break
-            self._put(stdscr, y, inner, label, theme.attr(prole, bold=True))
+            self._put(stdscr, y, inner, label, theme.attr("muted", bold=True))
             y += 1
             for e in entries:
                 if y >= top + height - 1:
@@ -299,9 +299,13 @@ class App:
         prole = "claude" if e.provider == "claude" else "codex"
         self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ",
                   theme.attr("accent", bold=True))
-        # Active account gets a green status dot; otherwise the provider's tint.
-        dot_attr = theme.attr("good") if e.active else theme.attr(prole)
-        email_attr = theme.attr(prole, bold=(e.active or selected))
+        # Keep colour quiet: only the highlighted row wears its provider tint
+        # (Claude orange / Codex blue). Active account is marked by a green dot.
+        dot_attr = theme.attr("good") if e.active else theme.attr("muted")
+        if selected:
+            email_attr = theme.attr(prole, bold=True)
+        else:
+            email_attr = theme.attr("text", bold=e.active)
 
         email = e.email if len(e.email) <= email_w else e.email[: email_w - 1] + "…"
         segs = [
@@ -323,7 +327,7 @@ class App:
             remaining = None if w.pct is None else 100 - w.pct
             bar_str, role = theme.bar(remaining)
             pct = f"{round(remaining):>3}% left" if remaining is not None else "   ? left"
-            reset = f" {theme.RESET_GLYPH}{w.resets}" if w.resets else ""
+            reset = f" in {w.resets}" if w.resets else ""
             segs += [
                 (f"{w.label} ", theme.attr("label")),
                 (bar_str + " ", theme.attr(role)),

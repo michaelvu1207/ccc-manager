@@ -15,7 +15,6 @@ BULLET = "•"  # •
 DIAMOND = "◆"  # ◆
 WARN = "⚠"  # ⚠
 DOTTED = "┊"  # ┊ left accent for table rows
-RESET_GLYPH = "↻"  # ↻ "resets in" marker before a countdown
 
 # Logical colour roles → (256-colour index, 8-colour fallback).
 _ROLES = {
