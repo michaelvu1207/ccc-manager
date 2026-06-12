@@ -67,15 +67,24 @@ def fmt_money(amount: float | None) -> str:
     return f"${amount:,.2f}"
 
 
-def fmt_reset_epoch(epoch_s: float | None) -> str:
-    """Format an epoch-seconds reset time as a short local timestamp."""
+def fmt_countdown(epoch_s: float | None, style: str = "hm") -> str:
+    """Time remaining until an epoch, as a compact duration.
+
+    style="hm": hours and minutes (for 5-hour windows), e.g. "2h 15m", "45m".
+    style="dh": days and hours (for weekly windows), e.g. "2d 5h", "6h".
+    """
     if not epoch_s:
         return ""
-    dt = datetime.fromtimestamp(epoch_s)
-    now = datetime.now()
-    if dt.date() == now.date():
-        return dt.strftime("%H:%M")
-    return dt.strftime("%H:%M %b %d")
+    remaining = epoch_s - datetime.now().timestamp()
+    if remaining <= 0:
+        return "now"
+    if style == "dh":
+        days = int(remaining // 86400)
+        hours = int((remaining % 86400) // 3600)
+        return f"{days}d {hours}h" if days else f"{hours}h"
+    hours = int(remaining // 3600)
+    minutes = int((remaining % 3600) // 60)
+    return f"{hours}h {minutes}m" if hours else f"{minutes}m"
 
 
 def fmt_age(epoch_s: float | None) -> str:

@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 
 from . import claude, codex
-from .render import bold, cyan, dim, fmt_age, fmt_money, fmt_reset_epoch, pct_colored
+from .render import bold, cyan, dim, fmt_age, fmt_countdown, pct_colored
 
 USAGE_STALE_SECONDS = 600
 
@@ -22,19 +22,14 @@ def claude_usage_cells(usage: dict | str | None) -> list[str]:
     cells = []
     h5 = usage.get("five_hour")
     if h5:
-        reset = h5.get("clock", "")
-        suffix = dim(f" (resets {reset})") if reset else ""
+        left = h5.get("countdown", "")
+        suffix = dim(f" ({left} left)") if left else ""
         cells.append(f"5h {pct_colored(h5.get('pct'))}{suffix}")
     d7 = usage.get("seven_day")
     if d7:
-        reset = d7.get("clock", "")
-        suffix = dim(f" (resets {reset})") if reset else ""
+        left = d7.get("countdown", "")
+        suffix = dim(f" ({left} left)") if left else ""
         cells.append(f"7d {pct_colored(d7.get('pct'))}{suffix}")
-    spend = usage.get("spend")
-    if spend:
-        used = fmt_money(spend.get("used"))
-        limit = fmt_money(spend.get("limit"))
-        cells.append(dim(f"spend {used} / {limit}"))
     return cells or [dim("no usage data")]
 
 
@@ -45,13 +40,13 @@ def codex_usage_cells(acct: codex.CodexAccount) -> list[str]:
     cells = []
     primary = acct.usage.get("primary")
     if primary:
-        reset = fmt_reset_epoch(primary.get("resets_at"))
-        suffix = dim(f" (resets {reset})") if reset else ""
+        left = fmt_countdown(primary.get("resets_at"), style="hm")
+        suffix = dim(f" ({left} left)") if left else ""
         cells.append(f"5h {pct_colored(primary.get('used_percent'))}{suffix}")
     secondary = acct.usage.get("secondary")
     if secondary:
-        reset = fmt_reset_epoch(secondary.get("resets_at"))
-        suffix = dim(f" (resets {reset})") if reset else ""
+        left = fmt_countdown(secondary.get("resets_at"), style="dh")
+        suffix = dim(f" ({left} left)") if left else ""
         cells.append(f"wk {pct_colored(secondary.get('used_percent'))}{suffix}")
 
     now = datetime.now().timestamp()
