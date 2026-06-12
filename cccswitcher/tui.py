@@ -412,8 +412,8 @@ class App:
 
     def _layout(self, w: int) -> dict:
         acc_rows = len(self.claude_entries) + len(self.codex_entries) + 2
-        box_h = max(acc_rows + 2, 12)  # >= 12 so the 10-row icon art fits
-        icon_w = 22
+        box_h = max(acc_rows + 2, 15)  # >= 15 so the 13-row icon art fits
+        icon_w = 34
         acc_left = 2 + icon_w + 2
         return {
             "box_top": 2, "box_h": box_h, "icon_left": 2, "icon_w": icon_w,

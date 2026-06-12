@@ -1,6 +1,6 @@
 [project]
 name = "cccswitcher"
-version = "0.9.0"
+version = "0.10.0"
 description = "A pretty terminal dashboard for switching between Claude Code and Codex accounts, with live usage and spend."
 readme = "README.md"
 requires-python = ">=3.10"
