@@ -14,10 +14,12 @@ ACCENT = "▌"  # ▌
 BULLET = "•"  # •
 DIAMOND = "◆"  # ◆
 WARN = "⚠"  # ⚠
+DOTTED = "┊"  # ┊ left accent for table rows
 
 # Logical colour roles → (256-colour index, 8-colour fallback).
 _ROLES = {
     "border": (212, curses.COLOR_MAGENTA),
+    "frame": (238, curses.COLOR_BLUE),
     "title": (84, curses.COLOR_GREEN),
     "value": (75, curses.COLOR_CYAN),
     "label": (245, curses.COLOR_WHITE),

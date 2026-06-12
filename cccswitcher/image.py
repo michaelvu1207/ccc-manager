@@ -1,0 +1,70 @@
+"""Inline terminal image rendering for the icon, with graceful detection.
+
+Uses the iTerm2 inline-image protocol (also understood by WezTerm). The image
+is emitted as a raw escape sequence positioned with save/restore-cursor, after
+curses has finished its frame — curses doesn't know about the pixels, so we
+re-emit on every repaint (repaints only happen on keypress / refresh, so there
+is no continuous flicker). Terminals without support fall back to ASCII art
+drawn by the caller.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import sys
+
+try:
+    from importlib.resources import files
+
+    _ICON = files("cccswitcher.assets").joinpath("icon.png")
+except Exception:  # pragma: no cover - importlib edge cases
+    _ICON = None
+
+_b64_cache: str | None = None
+
+
+def supported() -> bool:
+    """True if the terminal understands the iTerm2 inline-image protocol."""
+    if not sys.stdout.isatty():
+        return False
+    if os.environ.get("CCC_NO_IMAGE"):
+        return False
+    term_prog = os.environ.get("TERM_PROGRAM", "")
+    return term_prog in ("iTerm.app", "WezTerm")
+
+
+def _icon_b64() -> str | None:
+    global _b64_cache
+    if _b64_cache is not None:
+        return _b64_cache
+    if _ICON is None:
+        return None
+    try:
+        data = _ICON.read_bytes()
+    except (OSError, AttributeError):
+        return None
+    _b64_cache = base64.b64encode(data).decode("ascii")
+    return _b64_cache
+
+
+def emit(row: int, col: int, cols: int, rows: int) -> bool:
+    """Draw the icon at 1-based (row, col), sized to cols×rows character cells.
+
+    Returns True if something was emitted. Best-effort: never raises.
+    """
+    b64 = _icon_b64()
+    if b64 is None:
+        return False
+    seq = (
+        f"\0337\033[{row};{col}H"  # save cursor, move to icon origin
+        f"\033]1337;File=inline=1;width={cols};height={rows};"
+        f"preserveAspectRatio=1:{b64}\a"
+        f"\0338"  # restore cursor
+    )
+    try:
+        sys.stdout.write(seq)
+        sys.stdout.flush()
+        return True
+    except (OSError, ValueError):
+        return False

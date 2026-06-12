@@ -81,6 +81,7 @@ class App:
         self.dirty = True
         self.sel = 0
         self._last_shape: tuple | None = None
+        self._image_ok = False
 
     # ---------- data ----------
 
@@ -237,123 +238,129 @@ class App:
                 (" " + theme.HZ, b),
             ])
 
+    def _frame(self, stdscr, top, left, width, height, title=""):
+        """Outer container: a quiet rounded frame in the 'frame' colour."""
+        f = theme.attr("frame")
+        right, bottom = left + width - 1, top + height - 1
+        self._put(stdscr, top, left, theme.TL + theme.HZ * (width - 2) + theme.TR, f)
+        self._put(stdscr, bottom, left, theme.BL + theme.HZ * (width - 2) + theme.BR, f)
+        for yy in range(top + 1, bottom):
+            self._put(stdscr, yy, left, theme.VT, f)
+            self._put(stdscr, yy, right, theme.VT, f)
+        if title:
+            self._segs(stdscr, top, left + 2,
+                       [(theme.HZ + " ", f), (title, theme.attr("title", bold=True)), (" " + theme.HZ, f)])
+
     # ---------- panels ----------
 
-    def _draw_header(self, stdscr, top: int, left: int, width: int) -> int:
-        self._box(stdscr, top, left, width, 3, "CCC · Claude + Codex Switcher")
-        inner = left + 2
-        c, l = self._n_claude(), self._n_codex()
-        active = self._active_summary()
-        segs = [
-            (theme.DOT + " ", theme.attr("good")),
-            (f"{c} Claude", theme.attr("text", bold=True)),
-            ("    " + theme.DOT + " ", theme.attr("value")),
-            (f"{l} Codex", theme.attr("text", bold=True)),
-        ]
-        if active:
-            segs += [("    " + theme.DIAMOND + " active: ", theme.attr("label")),
-                     (active, theme.attr("value"))]
-        self._segs(stdscr, top + 1, inner, segs)
-        return top + 3
-
-    def _n_claude(self) -> int:
-        return len(self.claude_entries)
-
-    def _n_codex(self) -> int:
-        return len(self.codex_entries)
-
     def _active_summary(self) -> str:
-        names = []
-        for e in self.entries():
-            if e.active:
-                names.append(e.email.split("@")[0])
-        return " / ".join(names)
+        return " / ".join(e.email.split("@")[0] for e in self.entries() if e.active)
 
-    def _draw_accounts(self, stdscr, top: int, left: int, width: int) -> tuple[int, int]:
-        sections = [("CLAUDE", self.claude_entries), ("CODEX", self.codex_entries)]
-        rows = sum(len(e) for _, e in sections) + len(sections)
-        height = rows + 2
+    def _draw_icon(self, stdscr, top, left, width, height):
+        """Top-left app icon: an inline image where supported, else ASCII."""
+        self._box(stdscr, top, left, width, height, "")
+        if self._image_ok:
+            return  # the PNG is emitted after doupdate, into this box
+        midy = top + height // 2
+        for dy, text, role, bold in (
+            (-2, "꒰ ◕‿◕ ꒱", "danger", True),
+            (0, "C C C", "value", True),
+            (2, "Claude + Codex", "muted", False),
+        ):
+            tx = left + max(1, (width - len(text)) // 2)
+            self._put(stdscr, midy + dy, tx, text, theme.attr(role, bold=bold))
+
+    def _draw_accounts(self, stdscr, top, left, width, height):
+        """Top-right account switcher."""
         self._box(stdscr, top, left, width, height, "Accounts")
-
         inner = left + 2
+        right = left + width - 2
+        avail = right - inner
         email_w = max((len(e.email) for e in self.entries()), default=10)
-        email_w = min(email_w, max(12, width - 40))
+        email_w = min(email_w, max(14, avail - 52))
         y = top + 1
         flat = 0
+        sections = [("CLAUDE", self.claude_entries), ("CODEX", self.codex_entries)]
         for label, entries in sections:
+            if y >= top + height - 1:
+                break
             self._put(stdscr, y, inner, label, theme.attr("muted", bold=True))
             y += 1
             for e in entries:
-                self._draw_account_row(stdscr, y, inner, width, e, flat == self.sel, email_w)
+                if y >= top + height - 1:
+                    break
+                self._draw_account_row(stdscr, y, inner, right, e, flat == self.sel, email_w)
                 y += 1
                 flat += 1
-        return top + height, height
 
-    def _draw_account_row(self, stdscr, y, inner, width, e: Entry, selected, email_w):
-        accent_attr = theme.attr("accent", bold=True)
-        self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ", accent_attr)
-
+    def _draw_account_row(self, stdscr, y, inner, right, e: Entry, selected, email_w):
+        self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ",
+                  theme.attr("accent", bold=True))
         dot_attr = theme.attr("good") if e.active else theme.attr("muted")
-        email_attr = theme.attr("text", bold=True) if selected else theme.attr("text")
         if e.active:
-            email_attr = theme.attr("good", bold=selected)
+            email_attr = theme.attr("good", bold=True)
+        else:
+            email_attr = theme.attr("text", bold=selected)
 
         email = e.email if len(e.email) <= email_w else e.email[: email_w - 1] + "…"
-        x = self._segs(stdscr, y, inner + 1, [
+        segs = [
             (theme.DOT + " ", dot_attr),
             (f"{e.acct.num:>2}  ", theme.attr("muted")),
             (f"{email:<{email_w}}  ", email_attr),
-        ])
-
+        ]
         if e.needs_login:
-            self._segs(stdscr, y, x, [
-                (theme.WARN + " ", theme.attr("danger", bold=True)),
-                ("needs login", theme.attr("danger")),
-            ])
+            segs += [(theme.WARN + " ", theme.attr("danger", bold=True)),
+                     ("needs login", theme.attr("danger"))]
+            self._segs_clip(stdscr, y, inner + 1, right, segs)
             return
-
         windows = e.windows()
         if not windows:
-            self._put(stdscr, y, x, "usage unavailable", theme.attr("muted"))
+            segs.append(("usage unavailable", theme.attr("muted")))
+            self._segs_clip(stdscr, y, inner + 1, right, segs)
             return
         for w in windows:
             bar_str, role = theme.bar(w.pct)
             pct = f"{round(w.pct):>3}%" if w.pct is not None else "  ?"
-            x = self._segs(stdscr, y, x, [
+            segs += [
                 (f"{w.label} ", theme.attr("label")),
                 (bar_str + " ", theme.attr(role)),
                 (pct + "  ", theme.attr(role, bold=True)),
-                (f"{w.left:<13}" if w.left else " " * 13, theme.attr("muted")),
-            ])
-            x += 1
+            ]
+        self._segs_clip(stdscr, y, inner + 1, right, segs)
 
-    def _draw_stats(self, stdscr, top: int, left: int, width: int) -> int:
-        month_keys = sorted(
-            {m.month for s in self.stats.values() if s for m in s.months}
-        )[-3:]
-        stale = next((s for s in self.stats.values() if s and s.stale), None)
-        height = 4 + 2 + (1 if stale else 0)
-        self._box(stdscr, top, left, width, height, "Usage · all accounts, this machine")
-        inner = left + 2
+    def _segs_clip(self, stdscr, y, x, right, segments):
+        for text, attr in segments:
+            if x >= right:
+                break
+            if x + len(text) > right:
+                text = text[: right - x]
+            x = self._put(stdscr, y, x, text, attr)
 
-        col = 11
-        mcol = 11
-        lablabel = f"{'':<10}"
-        header = f"{lablabel}{'last 7d':>{col}}{'last 30d':>{col}}"
+    def _draw_usage_table(self, stdscr, top, left, width) -> int:
+        month_keys = sorted({m.month for s in self.stats.values() if s for m in s.months})[-3:]
+        self._put(stdscr, top, left, "USAGE  ·  all accounts on this machine",
+                  theme.attr("title", bold=True))
+        y = top + 2
+
+        name_w, col = 12, 13
+        header = f"{'PROVIDER':<{name_w}}{'LAST 7D':>{col}}{'LAST 30D':>{col}}"
         for mk in month_keys:
-            header += f"{_month_short(mk):>{mcol}}"
-        self._put(stdscr, top + 1, inner, header, theme.attr("label"))
+            header += f"{_month_short(mk).upper():>{col}}"
+        self._put(stdscr, y, left + 2, header, theme.attr("label"))
+        y += 1
+        self._put(stdscr, y, left, theme.HZ * (width - 2), theme.attr("frame"))
+        y += 1
 
         totals = {"7d": 0.0, "30d": 0.0}
         month_totals = {mk: 0.0 for mk in month_keys}
-        y = top + 2
-        for name, key, role in (("Claude", "claude", "value"), ("Codex", "codex", "value")):
+        rows = [("Claude", "claude"), ("Codex", "codex")]
+        for i, (name, key) in enumerate(rows):
             s = self.stats.get(key)
+            self._put(stdscr, y, left, theme.DOTTED, theme.attr("accent"))
             if s is None:
-                self._segs(stdscr, y, inner, [
-                    (f"{name:<10}", theme.attr("text")),
-                    ("collecting…", theme.attr("muted")),
-                ])
+                self._segs(stdscr, y, left + 2, [
+                    (f"{name:<{name_w}}", theme.attr("text", bold=True)),
+                    ("collecting…", theme.attr("muted"))])
                 y += 1
                 continue
             totals["7d"] += s.last7_cost
@@ -364,39 +371,54 @@ class App:
                 row = by_month.get(mk)
                 if row:
                     month_totals[mk] += row.cost
-                line += f"{(fmt_money(row.cost) if row else '—'):>{mcol}}"
-            self._segs(stdscr, y, inner, [
-                (f"{name:<10}", theme.attr("text", bold=True)),
-                (line, theme.attr(role)),
-            ])
+                line += f"{(fmt_money(row.cost) if row else '—'):>{col}}"
+            self._segs(stdscr, y, left + 2, [
+                (f"{name:<{name_w}}", theme.attr("text", bold=True)),
+                (line, theme.attr("value"))])
             y += 1
 
+        self._put(stdscr, y, left, theme.HZ * (width - 2), theme.attr("frame"))
+        y += 1
+        self._put(stdscr, y, left, theme.DOTTED, theme.attr("accent"))
         tline = f"{fmt_money(totals['7d']):>{col}}{fmt_money(totals['30d']):>{col}}"
         for mk in month_keys:
-            tline += f"{fmt_money(month_totals[mk]):>{mcol}}"
-        self._segs(stdscr, y, inner, [
-            (f"{'Total':<10}", theme.attr("title", bold=True)),
-            (tline, theme.attr("title", bold=True)),
-        ])
+            tline += f"{fmt_money(month_totals[mk]):>{col}}"
+        self._segs(stdscr, y, left + 2, [
+            (f"{'Total':<{name_w}}", theme.attr("title", bold=True)),
+            (tline, theme.attr("title", bold=True))])
         y += 1
-        if stale is not None:
-            self._put(stdscr, y, inner,
-                      f"cached {fmt_duration(stale.age_seconds)} ago · recompute failed, press r to retry",
-                      theme.attr("warn"))
-        return top + height
 
-    def _draw_footer(self, stdscr, y: int, left: int, width: int) -> None:
+        stale = next((s for s in self.stats.values() if s and s.stale), None)
+        if stale is not None:
+            self._put(stdscr, y, left + 2,
+                      f"cached {fmt_duration(stale.age_seconds)} ago · recompute failed, press r",
+                      theme.attr("warn"))
+            y += 1
+        return y
+
+    def _draw_footer(self, stdscr, y: int, left: int) -> None:
         with self.lock:
             status, refreshing = self.status, self.refreshing
         if status:
-            role = "warn" if refreshing else "muted"
-            self._put(stdscr, y - 1, left, status, theme.attr(role))
+            self._put(stdscr, y - 1, left, status,
+                      theme.attr("warn" if refreshing else "muted"))
         x = left
         for i, (key, desc) in enumerate(HINTS):
             if i:
-                x = self._put(stdscr, y, x, f"  {theme.BULLET}  ", theme.attr("border"))
+                x = self._put(stdscr, y, x, f"   {theme.BULLET}   ", theme.attr("frame"))
             x = self._put(stdscr, y, x, key, theme.attr("value", bold=True))
             x = self._put(stdscr, y, x, " " + desc, theme.attr("muted"))
+
+    def _layout(self, w: int) -> dict:
+        acc_rows = len(self.claude_entries) + len(self.codex_entries) + 2
+        box_h = max(acc_rows + 2, 11)
+        icon_w = 22
+        acc_left = 2 + icon_w + 2
+        return {
+            "box_top": 2, "box_h": box_h, "icon_left": 2, "icon_w": icon_w,
+            "acc_left": acc_left, "acc_w": max(20, w - acc_left - 2),
+            "cont_bottom": 2 + box_h + 1,
+        }
 
     def _draw(self, stdscr) -> None:
         # Full clear only when the layout shape changes (accounts/stats arriving
@@ -410,15 +432,25 @@ class App:
         else:
             stdscr.erase()
         h, w = stdscr.getmaxyx()
-        left, width = 1, max(20, w - 2)
-        y = self._draw_header(stdscr, 0, left, width) + 1
-        y, _ = self._draw_accounts(stdscr, y, left, width)
-        y += 1
+        L = self._layout(w)
+
+        # Outer container wrapping icon + account switcher.
+        self._frame(stdscr, 0, 0, w, L["cont_bottom"] + 1, "CCC · Claude + Codex Switcher")
+        self._draw_icon(stdscr, L["box_top"], L["icon_left"], L["icon_w"], L["box_h"])
+        self._draw_accounts(stdscr, L["box_top"], L["acc_left"], L["acc_w"], L["box_h"])
+
+        # Usage table below the container.
         if self.stats:
-            y = self._draw_stats(stdscr, y, left, width) + 1
-        self._draw_footer(stdscr, h - 1, left, width)
+            self._draw_usage_table(stdscr, L["cont_bottom"] + 2, 2, w - 4)
+
+        self._draw_footer(stdscr, h - 1, 2)
         stdscr.noutrefresh()
         curses.doupdate()
+
+        # Inline icon image, after curses has painted the frame.
+        if self._image_ok:
+            from . import image
+            image.emit(L["box_top"] + 2, L["icon_left"] + 2, L["icon_w"] - 2, L["box_h"] - 2)
 
     # ---------- main loop ----------
 
@@ -427,6 +459,8 @@ class App:
         stdscr.timeout(150)
         if curses.has_colors():
             theme.setup()
+        from . import image
+        self._image_ok = image.supported()
 
         # Paint cached data immediately, then refresh live usage behind it.
         self.refresh_async(refresh=False, then_refresh=True)

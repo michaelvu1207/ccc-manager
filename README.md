@@ -18,30 +18,33 @@ and watch your combined spend — all without leaving the terminal.
 ---
 
 ```
- ╭── CCC · Claude + Codex Switcher ───────────────────────────────────────────────────────────╮
- │ ● 3 Claude    ● 3 Codex    ◆ active: michaelmqvu2 / michaelmqvu                             │
- ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+╭── CCC · Claude + Codex Switcher ──────────────────────────────────────────────────────────────╮
+│                                                                                                │
+│ ╭────────────────────╮  ╭── Accounts ──────────────────────────────────────────────────────╮  │
+│ │                    │  │ CLAUDE                                                             │  │
+│ │                    │  │▌ ●  1  claudecodesama@gmail.com  5h █████ 100%  wk ███░░  58%      │  │
+│ │     ꒰ ◕‿◕ ꒱        │  │  ●  2  michael@simforge.ai       5h ███░░  69%  wk ████░  72%      │  │
+│ │      C C C         │  │  ●  3  michaelmqvu2@gmail.com      ⚠ needs login                   │  │
+│ │   Claude + Codex   │  │ CODEX                                                              │  │
+│ │                    │  │  ●  1  michaelmqvu@gmail.com     5h ░░░░░   0%  wk ██░░░  32%      │  │
+│ │                    │  │  ●  2  claudecodesama@gmail.com  5h ████░  70%  wk ██░░░  45%      │  │
+│ ╰────────────────────╯  ╰────────────────────────────────────────────────────────────────────╯  │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 
- ╭── Accounts ────────────────────────────────────────────────────────────────────────────────╮
- │ CLAUDE                                                                                       │
- │▌ ●  1  claudecodesama@gmail.com  5h █████ 100%  6m left      wk ███░░  58%  2d 3h left       │
- │  ●  2  michael@simforge.ai       5h ███░░  69%  2h 16m left  wk ████░  72%  5d 13h left      │
- │  ●  3  michaelmqvu2@gmail.com    5h █░░░░  19%  4h 36m left  wk █░░░░  29%  3d 18h left       │
- │ CODEX                                                                                        │
- │  ●  1  michaelmqvu@gmail.com     5h ░░░░░   0%  4h 59m left  wk ██░░░  32%  2d 22h left       │
- │  ●  2  claudecodesama@gmail.com  5h ███░░  65%  2h 17m left  wk ██░░░  44%  5d 23h left       │
- │  ●  3  michael@simforge.ai       5h ░░░░░   0%  4h 59m left  wk █████  91%  4h left           │
- ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+  USAGE  ·  all accounts on this machine
 
- ╭── Usage · all accounts, this machine ──────────────────────────────────────────────────────╮
- │               last 7d   last 30d        Apr        May        Jun                            │
- │ Claude      $3,815.82  $4,076.54          —    $627.65  $3,815.97                            │
- │ Codex       $3,133.26 $54,210.82 $19,323.14 $58,857.15  $6,017.43                            │
- │ Total       $6,949.08 $58,287.37 $19,323.14 $59,484.80  $9,833.41                            │
- ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+    PROVIDER          LAST 7D     LAST 30D          APR          MAY          JUN
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  ┊ Claude          $3,815.82    $4,076.54            —      $627.65    $3,815.97
+  ┊ Codex           $3,133.26   $54,210.82   $19,323.14   $58,857.15    $6,017.43
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  ┊ Total           $6,949.08   $58,287.37   $19,323.14   $59,484.80    $9,833.41
 
- ↑/↓ move  •  enter switch / login  •  l re-login  •  r refresh  •  q quit
+  ↑/↓ move  •  enter switch / login  •  l re-login  •  r refresh  •  q quit
 ```
+
+> On **iTerm2** and **WezTerm** the top-left tile renders the actual mascot as an
+> inline image; elsewhere it falls back to the ASCII face shown above.
 
 ## Why
 
