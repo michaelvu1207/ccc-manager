@@ -16,7 +16,7 @@ import threading
 from dataclasses import dataclass
 
 from . import actions, claude, codex, monthly
-from .render import fmt_money, fmt_tokens
+from .render import fmt_duration, fmt_money, fmt_tokens
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -62,7 +62,7 @@ class App:
 
     # ---------- data ----------
 
-    def _load(self, refresh: bool, then_refresh: bool = False) -> None:
+    def _load(self, refresh: bool, then_refresh: bool = False, force_stats: bool = False) -> None:
         """Fetch accounts and usage stats, publishing each as it lands.
 
         Plain daemon threads, not ThreadPoolExecutor: concurrent.futures
@@ -82,8 +82,8 @@ class App:
         jobs = {
             "claude": lambda: claude.load_accounts(refresh),
             "codex": lambda: codex.load_accounts(refresh),
-            "claude_stats": lambda: monthly.fetch_stats("claude"),
-            "codex_stats": lambda: monthly.fetch_stats("codex"),
+            "claude_stats": lambda: monthly.fetch_stats("claude", force=force_stats),
+            "codex_stats": lambda: monthly.fetch_stats("codex", force=force_stats),
         }
         threads = {
             k: threading.Thread(target=runner, args=(k, fn), daemon=True)
@@ -119,7 +119,9 @@ class App:
         if then_refresh:
             self.refresh_async(refresh=True)
 
-    def refresh_async(self, refresh: bool = True, then_refresh: bool = False) -> None:
+    def refresh_async(
+        self, refresh: bool = True, then_refresh: bool = False, force_stats: bool = False
+    ) -> None:
         with self.lock:
             if self.refreshing:
                 return
@@ -127,7 +129,7 @@ class App:
             if refresh:
                 self.status = "refreshing live usage..."
         threading.Thread(
-            target=self._load, args=(refresh, then_refresh), daemon=True
+            target=self._load, args=(refresh, then_refresh, force_stats), daemon=True
         ).start()
 
     def entries(self) -> list[Entry]:
@@ -264,7 +266,14 @@ class App:
             f"{fmt_money(totals['30d']):>20}"
         ) + "".join(f"{fmt_money(month_totals[mk]):>12}" for mk in month_keys)
         self._addstr(stdscr, y, 1, total_line, curses.A_BOLD)
-        return y + 1
+        y += 1
+
+        stale = next((s for s in self.stats.values() if s and s.stale), None)
+        if stale is not None:
+            note = f"  (cached {fmt_duration(stale.age_seconds)} ago; recompute failed — press r to retry)"
+            self._addstr(stdscr, y, 1, note, curses.A_DIM)
+            y += 1
+        return y
 
     def _draw(self, stdscr) -> None:
         stdscr.erase()
@@ -326,7 +335,7 @@ class App:
             elif ch == curses.KEY_RESIZE:
                 self.dirty = True
             elif ch == ord("r"):
-                self.refresh_async(refresh=True)
+                self.refresh_async(refresh=True, force_stats=True)
                 self.dirty = True
             elif entries and ch in (curses.KEY_ENTER, 10, 13):
                 self._activate(stdscr, entries[min(self.sel, len(entries) - 1)])

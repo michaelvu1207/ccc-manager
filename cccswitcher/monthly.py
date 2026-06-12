@@ -6,6 +6,11 @@ every account that was active here — they cannot be split per account.
 
 Prefers the locally installed `ccusage`; falls back to `npx -y ccusage@latest`
 when the local install is missing or too old for the provider subcommand.
+
+Results are cached on disk (see cache.py): ccusage refetches the LiteLLM
+pricing table every process and gives no hook to reuse our own, so caching its
+output avoids that repeated fetch. A stale entry also serves as a fallback when
+a live recompute fails, instead of showing no cost at all.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
+
+from . import cache
 
 
 @dataclass
@@ -32,6 +39,8 @@ class ProviderStats:
     last30_tokens: int
     last30_cost: float
     months: list[MonthRow]  # last few calendar months, ascending
+    stale: bool = False  # served from an expired cache (live recompute failed)
+    age_seconds: float | None = None  # age of the data when served from cache
 
 
 def _run_json(cmd: list[str], timeout: float) -> dict | None:
@@ -66,8 +75,18 @@ def _provider_json(provider: str, subargs: list[str], timeout: float) -> dict | 
     return None
 
 
-def fetch_monthly(provider: str, timeout: float = 120.0) -> list[MonthRow] | None:
-    """Fetch monthly usage rows for 'claude' or 'codex'. None if unavailable."""
+def _months_to_dicts(rows: list[MonthRow]) -> list[dict]:
+    return [{"month": r.month, "tokens": r.tokens, "cost": r.cost} for r in rows]
+
+
+def _months_from_dicts(rows: list[dict]) -> list[MonthRow]:
+    return [
+        MonthRow(month=r["month"], tokens=int(r["tokens"]), cost=float(r["cost"]))
+        for r in rows
+    ]
+
+
+def _compute_monthly(provider: str, timeout: float) -> list[MonthRow] | None:
     data = _provider_json(provider, ["monthly", "--json"], timeout)
     if data is None:
         return None
@@ -85,13 +104,12 @@ def fetch_monthly(provider: str, timeout: float = 120.0) -> list[MonthRow] | Non
     return rows
 
 
-def fetch_stats(provider: str, n_months: int = 3, timeout: float = 120.0) -> ProviderStats | None:
-    """Rolling 7d/30d sums plus the last few calendar months. None if ccusage unavailable."""
+def _compute_stats(provider: str, n_months: int, timeout: float) -> ProviderStats | None:
     from datetime import datetime, timedelta
 
     since = (datetime.now() - timedelta(days=29)).strftime("%Y%m%d")
     daily = _provider_json(provider, ["daily", "--json", "--since", since], timeout)
-    months = fetch_monthly(provider, timeout)
+    months = _compute_monthly(provider, timeout)
     if daily is None and months is None:
         return None
 
@@ -113,4 +131,68 @@ def fetch_stats(provider: str, n_months: int = 3, timeout: float = 120.0) -> Pro
         last30_tokens=last30_tokens,
         last30_cost=last30_cost,
         months=(months or [])[-n_months:],
+    )
+
+
+def fetch_monthly(
+    provider: str, timeout: float = 120.0, force: bool = False
+) -> list[MonthRow] | None:
+    """Monthly usage rows for 'claude' or 'codex', disk-cached with stale fallback."""
+    name = f"monthly-{provider}"
+    cached = cache.read(name)
+    if cached is not None and not force and cache.is_fresh(cached[1]):
+        return _months_from_dicts(cached[0])
+
+    rows = _compute_monthly(provider, timeout)
+    if rows is not None:
+        cache.write(name, _months_to_dicts(rows))
+        return rows
+    if cached is not None:  # live recompute failed — fall back to stale cache
+        return _months_from_dicts(cached[0])
+    return None
+
+
+def fetch_stats(
+    provider: str, n_months: int = 3, timeout: float = 120.0, force: bool = False
+) -> ProviderStats | None:
+    """Rolling 7d/30d sums plus recent months, disk-cached with stale fallback.
+
+    Within the cache TTL (CCC_STATS_TTL, default 1h) returns the cached value
+    without invoking ccusage — so the LiteLLM pricing fetch doesn't run. If a
+    live recompute fails, the last cached value is returned with stale=True
+    rather than dropping the cost entirely.
+    """
+    name = f"stats-{provider}"
+    cached = cache.read(name)
+    if cached is not None and not force and cache.is_fresh(cached[1]):
+        return _stats_from_dict(cached[0], stale=False, age=cached[1])
+
+    stats = _compute_stats(provider, n_months, timeout)
+    if stats is not None:
+        cache.write(name, _stats_to_dict(stats))
+        return stats
+    if cached is not None:  # live recompute failed — serve stale cache
+        return _stats_from_dict(cached[0], stale=True, age=cached[1])
+    return None
+
+
+def _stats_to_dict(stats: ProviderStats) -> dict:
+    return {
+        "last7_tokens": stats.last7_tokens,
+        "last7_cost": stats.last7_cost,
+        "last30_tokens": stats.last30_tokens,
+        "last30_cost": stats.last30_cost,
+        "months": _months_to_dicts(stats.months),
+    }
+
+
+def _stats_from_dict(data: dict, stale: bool, age: float | None) -> ProviderStats:
+    return ProviderStats(
+        last7_tokens=int(data["last7_tokens"]),
+        last7_cost=float(data["last7_cost"]),
+        last30_tokens=int(data["last30_tokens"]),
+        last30_cost=float(data["last30_cost"]),
+        months=_months_from_dicts(data.get("months", [])),
+        stale=stale,
+        age_seconds=age,
     )

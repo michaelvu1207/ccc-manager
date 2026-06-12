@@ -77,6 +77,23 @@ their state files:
 | Codex roster + usage | runs `codex-auth list`, reads `~/.codex/accounts/registry.json` |
 | Monthly totals | `ccusage <claude|codex> monthly --json` (falls back to `npx -y ccusage@latest`) |
 
+### Pricing / cost cache
+
+ccusage refetches its pricing table from LiteLLM on every process (and `ccc`
+spawns several ccusage calls per run), which is slow and fails outright when
+offline — surfacing as "cannot calculate total cost". ccusage exposes no hook
+to reuse a cached pricing table, so CCCSwitcher caches ccusage's *computed*
+output instead, under `~/.cache/cccswitcher/` (honors `XDG_CACHE_HOME`).
+
+- Within the TTL (`CCC_STATS_TTL` seconds, default 3600) the cost panel is
+  served from cache with no ccusage call — so the pricing fetch never runs.
+- The live per-account 5h / weekly percentages still refresh every run from
+  cswap / codex-auth, so only the cost panel is cached.
+- If a live recompute fails, the last cached numbers are shown marked
+  `(cached …)` rather than dropping the cost entirely.
+- Force a fresh recompute with `ccc list --refresh`, `ccc monthly --refresh`,
+  or `r` in the TUI.
+
 ### Caveat: monthly totals are per-machine, not per-account
 
 ccusage computes usage from local session logs (`~/.claude/projects`,

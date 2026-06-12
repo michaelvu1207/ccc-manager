@@ -87,13 +87,11 @@ def fmt_countdown(epoch_s: float | None, style: str = "hm") -> str:
     return f"{hours}h {minutes}m" if hours else f"{minutes}m"
 
 
-def fmt_age(epoch_s: float | None) -> str:
-    """Human age of a cached timestamp, e.g. '3m', '2h', '1d'."""
-    if not epoch_s:
+def fmt_duration(seconds: float | None) -> str:
+    """Human duration, e.g. '3m', '2h', '1d'. Used for cache ages."""
+    if seconds is None:
         return "?"
-    delta = datetime.now(timezone.utc).timestamp() - epoch_s
-    if delta < 0:
-        delta = 0
+    delta = max(0.0, seconds)
     if delta < 90:
         return f"{round(delta)}s"
     if delta < 5400:
@@ -101,3 +99,10 @@ def fmt_age(epoch_s: float | None) -> str:
     if delta < 129600:
         return f"{round(delta / 3600)}h"
     return f"{round(delta / 86400)}d"
+
+
+def fmt_age(epoch_s: float | None) -> str:
+    """Human age of a cached timestamp, e.g. '3m', '2h', '1d'."""
+    if not epoch_s:
+        return "?"
+    return fmt_duration(datetime.now(timezone.utc).timestamp() - epoch_s)

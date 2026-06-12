@@ -14,7 +14,7 @@ from .actions import (
     login_claude,
     login_codex,
 )
-from .render import bold, cyan, dim, fmt_money, fmt_tokens
+from .render import bold, cyan, dim, fmt_duration, fmt_money, fmt_tokens
 
 
 def _print_account_line(
@@ -34,11 +34,12 @@ def cmd_tui(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     refresh = not args.no_refresh
+    force_stats = getattr(args, "refresh", False)
     with ThreadPoolExecutor(max_workers=4) as pool:
         claude_future = pool.submit(claude.load_accounts, refresh)
         codex_future = pool.submit(codex.load_accounts, refresh)
-        claude_stats_future = pool.submit(monthly.fetch_stats, "claude")
-        codex_stats_future = pool.submit(monthly.fetch_stats, "codex")
+        claude_stats_future = pool.submit(monthly.fetch_stats, "claude", force=force_stats)
+        codex_stats_future = pool.submit(monthly.fetch_stats, "codex", force=force_stats)
 
         claude_accounts, _ = claude_future.result()
         codex_accounts = codex_future.result()
@@ -118,11 +119,16 @@ def _print_stats_summary(stats: dict[str, monthly.ProviderStats | None]) -> None
     ) + "".join(f"{fmt_money(month_totals[mk]):>12}" for mk in month_keys)
     print(f"  {bold(total_line)}")
 
+    stale = next((s for s in stats.values() if s and s.stale), None)
+    if stale is not None:
+        print(dim(f"  (cached {fmt_duration(stale.age_seconds)} ago; ccusage recompute failed — `ccc list --refresh` to retry)"))
+
 
 def cmd_monthly(args: argparse.Namespace) -> int:
+    force = getattr(args, "refresh", False)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        claude_future = pool.submit(monthly.fetch_monthly, "claude")
-        codex_future = pool.submit(monthly.fetch_monthly, "codex")
+        claude_future = pool.submit(monthly.fetch_monthly, "claude", force=force)
+        codex_future = pool.submit(monthly.fetch_monthly, "codex", force=force)
         claude_months = claude_future.result()
         codex_months = codex_future.result()
 
@@ -199,10 +205,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use cached usage instead of refreshing via cswap/codex-auth",
     )
+    list_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force-recompute the cost stats (bypass the pricing/usage cache)",
+    )
     list_parser.set_defaults(func=cmd_list)
 
     monthly_parser = sub.add_parser("monthly", help="Monthly token/cost table for both providers")
     monthly_parser.add_argument("--last", type=int, default=None, help="Only show the last N months")
+    monthly_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force-recompute (bypass the pricing/usage cache)",
+    )
     monthly_parser.set_defaults(func=cmd_monthly)
 
     login_parser = sub.add_parser(
