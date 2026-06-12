@@ -168,6 +168,12 @@ def cmd_monthly(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    from . import snapshot
+
+    return snapshot.dump_snapshot(refresh=not args.no_refresh)
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     if args.provider == "codex":
         if args.query:
@@ -220,6 +226,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Force-recompute (bypass the pricing/usage cache)",
     )
     monthly_parser.set_defaults(func=cmd_monthly)
+
+    snapshot_parser = sub.add_parser(
+        "snapshot",
+        help="Print all account state as JSON (for GUI front-ends)",
+    )
+    snapshot_parser.add_argument(
+        "--no-refresh",
+        action="store_true",
+        help="Use cached usage instead of refreshing via cswap/codex-auth",
+    )
+    snapshot_parser.set_defaults(func=cmd_snapshot)
 
     login_parser = sub.add_parser(
         "login",

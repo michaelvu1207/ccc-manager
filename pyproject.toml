@@ -1,6 +1,6 @@
 [project]
 name = "cccswitcher"
-version = "0.15.0"
+version = "0.16.0"
 description = "A pretty terminal dashboard for switching between Claude Code and Codex accounts, with live usage and spend."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,9 +11,9 @@ keywords = ["claude", "codex", "tui", "account-switcher", "usage", "cli"]
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/maikyon/cccswitcher"
-Repository = "https://github.com/maikyon/cccswitcher"
-Issues = "https://github.com/maikyon/cccswitcher/issues"
+Homepage = "https://github.com/michaelvu1207/cccswitcher"
+Repository = "https://github.com/michaelvu1207/cccswitcher"
+Issues = "https://github.com/michaelvu1207/cccswitcher/issues"
 
 [project.scripts]
 ccc = "cccswitcher.cli:main"

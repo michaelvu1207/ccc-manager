@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="assets/ccc-mascot.png" alt="CCC mascot — a Claude Code slime and a Codex slime" width="280" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/ccc-banner-dark.png">
+  <img src="assets/ccc-banner-light.png" alt="Claude Code Codex Manager — a Claude Code slime and a Codex slime" width="720" />
+</picture>
 
 # CCC · Claude + Codex Switcher
 
@@ -22,12 +25,12 @@ and watch your combined spend — all without leaving the terminal.
 │                                                                                                │
 │ ╭────────────────────╮  ╭── Accounts ──────────────────────────────────────────────────────╮  │
 │ │                    │  │ CLAUDE                                                             │  │
-│ │                    │  │▌ ●  1  claudecodesama@gmail.com  5h █████ 100%  wk ███░░  58%      │  │
-│ │     ꒰ ◕‿◕ ꒱        │  │  ●  2  michael@simforge.ai       5h ███░░  69%  wk ████░  72%      │  │
-│ │      C C C         │  │  ●  3  michaelmqvu2@gmail.com      ⚠ needs login                   │  │
+│ │                    │  │▌ ●  1  main-account@example.com  5h █████ 100%  wk ███░░  58%      │  │
+│ │     ꒰ ◕‿◕ ꒱        │  │  ●  2  michael@example.org       5h ███░░  69%  wk ████░  72%      │  │
+│ │      C C C         │  │  ●  3  second-alt@example.com      ⚠ needs login                   │  │
 │ │   Claude + Codex   │  │ CODEX                                                              │  │
-│ │                    │  │  ●  1  michaelmqvu@gmail.com     5h ░░░░░   0%  wk ██░░░  32%      │  │
-│ │                    │  │  ●  2  claudecodesama@gmail.com  5h ████░  70%  wk ██░░░  45%      │  │
+│ │                    │  │  ●  1  spare-alt@example.com     5h ░░░░░   0%  wk ██░░░  32%      │  │
+│ │                    │  │  ●  2  main-account@example.com  5h ████░  70%  wk ██░░░  45%      │  │
 │ ╰────────────────────╯  ╰────────────────────────────────────────────────────────────────────╯  │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -81,10 +84,10 @@ Python 3.10+.
 
 ```sh
 # with uv (recommended)
-uv tool install git+https://github.com/<you>/cccswitcher
+uv tool install git+https://github.com/michaelvu1207/cccswitcher
 
 # or with pipx
-pipx install git+https://github.com/<you>/cccswitcher
+pipx install git+https://github.com/michaelvu1207/cccswitcher
 ```
 
 Then just run:
@@ -120,6 +123,23 @@ ccc login codex          # re-auth a Codex account (chosen in the browser)
 ccc switch claude 2      # switch active account directly
 ```
 
+## Menu bar app (macOS)
+
+The same dashboard as a native SwiftUI menu bar app: live usage bars at a
+glance, one-click switching, and re-login handoff to Terminal. It's a thin
+renderer over `ccc snapshot` — the Python CLI stays the source of truth.
+
+```sh
+brew install xcodegen        # one-time, generates the Xcode project
+cd macapp
+xcodegen generate
+xcodebuild -project CCC.xcodeproj -scheme CCC -configuration Release -derivedDataPath build build
+open build/Build/Products/Release/CCC.app
+```
+
+Requires Xcode and an installed `ccc` (the app shells out to it). Toggle
+"start at login" from the popover footer.
+
 ## How it works
 
 CCC reimplements no authentication. It drives your existing tools and reads
@@ -154,7 +174,7 @@ Issues and PRs welcome — this is meant to be a fun little tool. The code is
 plain Python with no build step:
 
 ```sh
-git clone https://github.com/<you>/cccswitcher && cd cccswitcher
+git clone https://github.com/michaelvu1207/cccswitcher && cd cccswitcher
 uv tool install --force --reinstall .   # install your working copy
 ```
 

@@ -1,0 +1,32 @@
+name: CCC
+options:
+  bundleIdPrefix: dev.maikyon
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+targets:
+  CCC:
+    type: application
+    platform: macOS
+    sources:
+      - CCC
+      - path: ../assets/ccc-banner-light.png
+        buildPhase: resources
+      - path: ../assets/ccc-banner-dark.png
+        buildPhase: resources
+    info:
+      path: CCC/Info.plist
+      properties:
+        CFBundleDisplayName: CCC
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.maikyon.ccc
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: false
+        ENABLE_APP_SANDBOX: false
