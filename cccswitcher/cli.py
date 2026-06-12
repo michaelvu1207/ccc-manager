@@ -6,68 +6,15 @@ import argparse
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
 from . import __version__, claude, codex, monthly
-from .render import (
-    bold,
-    cyan,
-    dim,
-    fmt_age,
-    fmt_money,
-    fmt_reset_epoch,
-    fmt_tokens,
-    pct_colored,
+from .actions import (
+    claude_usage_cells,
+    codex_usage_cells,
+    login_claude,
+    login_codex,
 )
-
-USAGE_STALE_SECONDS = 600
-
-
-def _claude_usage_cells(usage: dict | str | None) -> list[str]:
-    if usage is None:
-        return [dim("usage unavailable")]
-    if isinstance(usage, str):
-        return [dim(usage)]
-
-    cells = []
-    h5 = usage.get("five_hour")
-    if h5:
-        reset = h5.get("clock", "")
-        suffix = dim(f" (resets {reset})") if reset else ""
-        cells.append(f"5h {pct_colored(h5.get('pct'))}{suffix}")
-    d7 = usage.get("seven_day")
-    if d7:
-        reset = d7.get("clock", "")
-        suffix = dim(f" (resets {reset})") if reset else ""
-        cells.append(f"7d {pct_colored(d7.get('pct'))}{suffix}")
-    spend = usage.get("spend")
-    if spend:
-        used = fmt_money(spend.get("used"))
-        limit = fmt_money(spend.get("limit"))
-        cells.append(dim(f"spend {used} / {limit}"))
-    return cells or [dim("no usage data")]
-
-
-def _codex_usage_cells(acct: codex.CodexAccount) -> list[str]:
-    if not acct.usage:
-        return [dim("usage unavailable")]
-
-    cells = []
-    primary = acct.usage.get("primary")
-    if primary:
-        reset = fmt_reset_epoch(primary.get("resets_at"))
-        suffix = dim(f" (resets {reset})") if reset else ""
-        cells.append(f"5h {pct_colored(primary.get('used_percent'))}{suffix}")
-    secondary = acct.usage.get("secondary")
-    if secondary:
-        reset = fmt_reset_epoch(secondary.get("resets_at"))
-        suffix = dim(f" (resets {reset})") if reset else ""
-        cells.append(f"wk {pct_colored(secondary.get('used_percent'))}{suffix}")
-
-    now = datetime.now().timestamp()
-    if acct.usage_at and now - acct.usage_at > USAGE_STALE_SECONDS:
-        cells.append(dim(f"(as of {fmt_age(acct.usage_at)} ago)"))
-    return cells or [dim("no usage data")]
+from .render import bold, cyan, dim, fmt_money, fmt_tokens
 
 
 def _print_account_line(
@@ -76,18 +23,29 @@ def _print_account_line(
     print(f"  {marker} {num:>2}  {label:<{label_width}}  {'  '.join(cells)}")
 
 
+def cmd_tui(args: argparse.Namespace) -> int:
+    if not sys.stdout.isatty():
+        print("not a terminal — use `ccc list` instead", file=sys.stderr)
+        return 1
+    from . import tui
+
+    return tui.run()
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     refresh = not args.no_refresh
     with ThreadPoolExecutor(max_workers=4) as pool:
         claude_future = pool.submit(claude.load_accounts, refresh)
         codex_future = pool.submit(codex.load_accounts, refresh)
-        claude_monthly_future = pool.submit(monthly.fetch_monthly, "claude")
-        codex_monthly_future = pool.submit(monthly.fetch_monthly, "codex")
+        claude_stats_future = pool.submit(monthly.fetch_stats, "claude")
+        codex_stats_future = pool.submit(monthly.fetch_stats, "codex")
 
         claude_accounts, _ = claude_future.result()
         codex_accounts = codex_future.result()
-        claude_months = claude_monthly_future.result()
-        codex_months = codex_monthly_future.result()
+        stats = {
+            "claude": claude_stats_future.result(),
+            "codex": codex_stats_future.result(),
+        }
 
     print(bold("Claude") + dim(" (cswap)"))
     if claude_accounts:
@@ -95,7 +53,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         for acct in claude_accounts:
             marker = cyan("*") if acct.active else " "
             _print_account_line(
-                marker, acct.num, acct.email, width, _claude_usage_cells(acct.usage)
+                marker, acct.num, acct.email, width, claude_usage_cells(acct.usage)
             )
     else:
         print(dim("  no accounts found (is claude-swap set up?)"))
@@ -110,39 +68,55 @@ def cmd_list(args: argparse.Namespace) -> int:
         width = max(len(v) for v in labels.values())
         for acct in codex_accounts:
             marker = cyan("*") if acct.active else " "
-            cells = ([dim(f"{acct.plan:<4}")] if acct.plan else []) + _codex_usage_cells(acct)
+            cells = ([dim(f"{acct.plan:<4}")] if acct.plan else []) + codex_usage_cells(acct)
             _print_account_line(marker, acct.num, labels[acct.num], width, cells)
     else:
         print(dim("  no accounts found (is codex-auth set up?)"))
 
     print()
-    _print_month_summary(claude_months, codex_months)
+    _print_stats_summary(stats)
     return 0
 
 
-def _print_month_summary(
-    claude_months: list[monthly.MonthRow] | None,
-    codex_months: list[monthly.MonthRow] | None,
-) -> None:
-    current = datetime.now().strftime("%Y-%m")
-    title = datetime.now().strftime("%B %Y")
-    print(bold(f"This month ({title})") + dim(" — local logs, all accounts combined"))
+def _print_stats_summary(stats: dict[str, monthly.ProviderStats | None]) -> None:
+    print(bold("Usage") + dim(" — local logs, all accounts combined"))
 
-    total_cost = 0.0
-    total_tokens = 0
-    for name, rows in (("Claude", claude_months), ("Codex", codex_months)):
-        if rows is None:
-            print(f"  {name:<7} {dim('unavailable (is ccusage installed?)')}")
+    month_keys = sorted(
+        {m.month for s in stats.values() if s for m in s.months}
+    )[-3:]
+    header = f"  {'':<8}{'last 7d':>20}{'last 30d':>20}" + "".join(
+        f"{mk:>12}" for mk in month_keys
+    )
+    print(dim(header))
+
+    totals = {"7d": 0.0, "30d": 0.0}
+    month_totals = {mk: 0.0 for mk in month_keys}
+    for name, key in (("Claude", "claude"), ("Codex", "codex")):
+        provider_stats = stats.get(key)
+        if provider_stats is None:
+            print(f"  {name:<8}{dim('unavailable (is ccusage installed?)')}")
             continue
-        row = next((r for r in rows if r.month == current), None)
-        tokens = row.tokens if row else 0
-        cost = row.cost if row else 0.0
-        total_tokens += tokens
-        total_cost += cost
-        print(f"  {name:<7} {fmt_tokens(tokens):>9} tokens  {fmt_money(cost):>10}")
-    total_label = bold(f"{'Total':<7}")
-    total_money = bold(f"{fmt_money(total_cost):>10}")
-    print(f"  {total_label} {fmt_tokens(total_tokens):>9} tokens  {total_money}")
+        totals["7d"] += provider_stats.last7_cost
+        totals["30d"] += provider_stats.last30_cost
+        by_month = {m.month: m for m in provider_stats.months}
+        line = (
+            f"  {name:<8}"
+            f"{fmt_money(provider_stats.last7_cost) + ' · ' + fmt_tokens(provider_stats.last7_tokens):>20}"
+            f"{fmt_money(provider_stats.last30_cost) + ' · ' + fmt_tokens(provider_stats.last30_tokens):>20}"
+        )
+        for mk in month_keys:
+            row = by_month.get(mk)
+            if row:
+                month_totals[mk] += row.cost
+            line += f"{fmt_money(row.cost) if row else '--':>12}"
+        print(line)
+
+    total_line = (
+        f"{'Total':<8}"
+        f"{fmt_money(totals['7d']):>20}"
+        f"{fmt_money(totals['30d']):>20}"
+    ) + "".join(f"{fmt_money(month_totals[mk]):>12}" for mk in month_keys)
+    print(f"  {bold(total_line)}")
 
 
 def cmd_monthly(args: argparse.Namespace) -> int:
@@ -188,88 +162,12 @@ def cmd_monthly(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_verified_usage(provider: str, match: str) -> None:
-    """Refresh usage and print the matched account's line as login verification."""
-    print(dim("verifying usage with the new credentials..."))
-    if provider == "claude":
-        accounts, _ = claude.load_accounts(refresh=True)
-        for acct in accounts:
-            if acct.num == match or acct.email == match:
-                print(f"  {acct.email}: {'  '.join(_claude_usage_cells(acct.usage))}")
-                return
-    else:
-        for acct in codex.load_accounts(refresh=True):
-            if acct.email == match:
-                print(f"  {acct.email}: {'  '.join(_codex_usage_cells(acct))}")
-                return
-    print(dim("  account not found after login"))
-
-
-def _login_codex(stay: bool) -> int:
-    prev = next((a.email for a in codex.load_accounts(refresh=False) if a.active), None)
-    print("Opening the OpenAI login page in your browser — sign in with the account to (re-)authenticate.")
-    rc = subprocess.run(["codex-auth", "login"]).returncode
-    if rc != 0:
-        return rc
-
-    new = next((a.email for a in codex.load_accounts(refresh=False) if a.active), None)
-    if not stay and prev and new and new != prev:
-        print(dim(f"restoring active account: {prev}"))
-        subprocess.run(["codex-auth", "switch", prev], stdout=subprocess.DEVNULL)
-    if new:
-        _print_verified_usage("codex", new)
-    return 0
-
-
-def _login_claude(query: str | None, stay: bool) -> int:
-    accounts, _ = claude.load_accounts(refresh=False)
-    if not accounts:
-        print("no claude-swap accounts found — run `cswap --add-account` first", file=sys.stderr)
-        return 1
-
-    active = next((a for a in accounts if a.active), None)
-    if query:
-        target = next(
-            (a for a in accounts if a.num == query or a.email == query),
-            None,
-        ) or next((a for a in accounts if query.lower() in a.email.lower()), None)
-        if target is None:
-            print(f"no claude account matches {query!r}", file=sys.stderr)
-            return 1
-    else:
-        target = active
-        if target is None:
-            print("no active claude account; pass a slot number or email", file=sys.stderr)
-            return 1
-
-    swapped = active is None or target.num != active.num
-    if swapped:
-        print(dim(f"switching active Claude account to slot {target.num} ({target.email})"))
-        rc = subprocess.run(["cswap", "--switch-to", target.num]).returncode
-        if rc != 0:
-            return rc
-
-    print()
-    print(bold(f"Claude Code will open — sign in as {cyan(target.email)}."))
-    print("If login doesn't start automatically, type /login. When done, exit Claude Code (/exit).")
-    print()
-    subprocess.run(["claude", "/login"])
-
-    if swapped and not stay and active is not None:
-        print(dim(f"restoring active account: slot {active.num} ({active.email})"))
-        rc = subprocess.run(["cswap", "--switch-to", active.num]).returncode
-        if rc != 0:
-            print("warning: failed to switch back — check `cswap --list`", file=sys.stderr)
-    _print_verified_usage("claude", target.num)
-    return 0
-
-
 def cmd_login(args: argparse.Namespace) -> int:
     if args.provider == "codex":
         if args.query:
             print(dim("note: for codex the account is chosen in the browser; query ignored"))
-        return _login_codex(stay=args.stay)
-    return _login_claude(args.query, stay=args.stay)
+        return login_codex(stay=args.stay)
+    return login_claude(args.query, stay=args.stay)
 
 
 def cmd_switch(args: argparse.Namespace) -> int:
@@ -292,7 +190,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"cccswitcher {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    list_parser = sub.add_parser("list", help="List all accounts with live usage (default)")
+    tui_parser = sub.add_parser("tui", help="Interactive account switcher (default on a terminal)")
+    tui_parser.set_defaults(func=cmd_tui)
+
+    list_parser = sub.add_parser("list", help="List all accounts with live usage")
     list_parser.add_argument(
         "--no-refresh",
         action="store_true",
@@ -328,7 +229,9 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
-        args = parser.parse_args(["list"] + (argv or sys.argv[1:]))
+        # Bare `ccc`: interactive TUI on a terminal, plain list otherwise.
+        default = "tui" if sys.stdout.isatty() and sys.stdin.isatty() else "list"
+        args = parser.parse_args([default])
     return args.func(args)
 
 

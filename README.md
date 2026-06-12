@@ -19,7 +19,8 @@ gracefully if its underlying tool is missing).
 ## Usage
 
 ```sh
-ccc                      # list all accounts (both providers) with live usage + this month's totals
+ccc                      # interactive TUI (default on a terminal; plain list when piped)
+ccc list                 # non-interactive account list with live usage + usage summary
 ccc list --no-refresh    # same, but use cached usage (fast, no network)
 ccc monthly              # month-by-month token/cost table for Claude + Codex combined
 ccc monthly --last 6     # only the last 6 months
@@ -30,6 +31,27 @@ ccc login codex          # open the OpenAI login page; pick the account in the b
 ccc login claude 3       # re-auth Claude slot 3 (or pass an email / substring)
 ccc login claude         # re-auth the currently active Claude account
 ```
+
+### TUI
+
+Bare `ccc` opens an interactive switcher showing every Claude and Codex
+account with live usage, plus a usage panel with rolling **last 7 days**,
+**last 30 days**, and the **last three calendar months** (cost · tokens,
+machine-wide via ccusage).
+
+| Key | Action |
+|---|---|
+| `↑`/`↓` (or `j`/`k`) | move between accounts across both providers |
+| `Enter` | switch to the account — or, if its credentials are dead (`⚠ needs login`), open the provider's login page and keep it active |
+| `l` | re-authenticate the selected account, then restore your current active account |
+| `r` | refresh live usage |
+| `q` | quit |
+
+Before any login flow the account's email is copied to the clipboard, so you
+can paste it straight into the provider's account picker. Dead credentials
+are detected from failed usage fetches (claude-swap auto-refreshes tokens
+when a refresh token exists, so a persistent failure means re-login; for
+Codex, usage frozen for >24h means its API token stopped working).
 
 `ccc login` handles the whole re-auth dance: for Claude it swaps the target
 slot in (`cswap --switch-to`), launches `claude /login` so the browser login

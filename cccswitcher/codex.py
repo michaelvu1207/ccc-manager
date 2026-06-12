@@ -50,6 +50,22 @@ def refresh_usage(timeout: float = 60.0) -> bool:
         return False
 
 
+STALE_USAGE_SECONDS = 86400
+
+
+def needs_login(acct: CodexAccount) -> bool:
+    """Heuristic: usage never fetched, or frozen for over a day, means the token is dead.
+
+    codex-auth refreshes every account's usage on each `list`, so a stale
+    last_usage_at while others advance indicates its API calls are failing.
+    """
+    import time
+
+    if not acct.usage or not acct.usage_at:
+        return True
+    return time.time() - acct.usage_at > STALE_USAGE_SECONDS
+
+
 def load_accounts(refresh: bool = True) -> list[CodexAccount]:
     """Return codex accounts in registry order. Empty list if registry absent."""
     if refresh:

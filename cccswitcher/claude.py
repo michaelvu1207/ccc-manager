@@ -59,6 +59,18 @@ def refresh_usage(timeout: float = 45.0) -> bool:
         return False
 
 
+def needs_login(acct: "ClaudeAccount") -> bool:
+    """True when the account's credentials look dead.
+
+    cswap auto-refreshes expired tokens whenever a refresh token exists, so a
+    usage fetch that still failed (None) or had no credentials (str) is our
+    dead-credentials signal. We deliberately do NOT read claude-swap's
+    keyring items here: other processes reading them triggers macOS Keychain
+    authorization prompts and multi-second hangs.
+    """
+    return acct.usage is None or isinstance(acct.usage, str)
+
+
 def _active_identity() -> tuple[str, str] | None:
     data = _read_json(CLAUDE_CONFIG)
     if not data:
