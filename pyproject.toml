@@ -1,5 +1,5 @@
 [project]
-name = "cccswitcher"
+name = "ccc-manager"
 version = "0.16.0"
 description = "A pretty terminal dashboard for switching between Claude Code and Codex accounts, with live usage and spend."
 readme = "README.md"
@@ -11,9 +11,9 @@ keywords = ["claude", "codex", "tui", "account-switcher", "usage", "cli"]
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/michaelvu1207/cccswitcher"
-Repository = "https://github.com/michaelvu1207/cccswitcher"
-Issues = "https://github.com/michaelvu1207/cccswitcher/issues"
+Homepage = "https://github.com/michaelvu1207/ccc-manager"
+Repository = "https://github.com/michaelvu1207/ccc-manager"
+Issues = "https://github.com/michaelvu1207/ccc-manager/issues"
 
 [project.scripts]
 ccc = "cccswitcher.cli:main"

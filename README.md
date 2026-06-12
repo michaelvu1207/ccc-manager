@@ -5,7 +5,7 @@
   <img src="assets/ccc-banner-light.png" alt="Claude Code Codex Manager — a Claude Code slime and a Codex slime" width="720" />
 </picture>
 
-# CCC · Claude + Codex Switcher
+# CCC · Claude Code Codex Manager
 
 **One pretty terminal dashboard for every Claude Code and Codex account you own.**
 
@@ -84,10 +84,10 @@ Python 3.10+.
 
 ```sh
 # with uv (recommended)
-uv tool install git+https://github.com/michaelvu1207/cccswitcher
+uv tool install git+https://github.com/michaelvu1207/ccc-manager
 
 # or with pipx
-pipx install git+https://github.com/michaelvu1207/cccswitcher
+pipx install git+https://github.com/michaelvu1207/ccc-manager
 ```
 
 Then just run:
@@ -174,7 +174,7 @@ Issues and PRs welcome — this is meant to be a fun little tool. The code is
 plain Python with no build step:
 
 ```sh
-git clone https://github.com/michaelvu1207/cccswitcher && cd cccswitcher
+git clone https://github.com/michaelvu1207/ccc-manager && cd ccc-manager
 uv tool install --force --reinstall .   # install your working copy
 ```
 

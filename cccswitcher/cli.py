@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="ccc",
         description="Combined Claude (cswap) + Codex (codex-auth) accounts, usage, and monthly cost.",
     )
-    parser.add_argument("--version", action="version", version=f"cccswitcher {__version__}")
+    parser.add_argument("--version", action="version", version=f"ccc-manager {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     tui_parser = sub.add_parser("tui", help="Interactive account switcher (default on a terminal)")

@@ -1,3 +1,3 @@
-"""CCCSwitcher — combined Claude + Codex account and usage overview."""
+"""CCC Manager — combined Claude + Codex account and usage overview."""
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
