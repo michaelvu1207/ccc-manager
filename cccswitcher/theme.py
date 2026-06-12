@@ -15,12 +15,15 @@ BULLET = "•"  # •
 DIAMOND = "◆"  # ◆
 WARN = "⚠"  # ⚠
 DOTTED = "┊"  # ┊ left accent for table rows
+RESET_GLYPH = "↻"  # ↻ "resets in" marker before a countdown
 
 # Logical colour roles → (256-colour index, 8-colour fallback).
 _ROLES = {
     "border": (212, curses.COLOR_MAGENTA),
     "frame": (238, curses.COLOR_BLUE),
     "title": (84, curses.COLOR_GREEN),
+    "claude": (215, curses.COLOR_YELLOW),  # Claude's warm orange
+    "codex": (75, curses.COLOR_CYAN),      # Codex's blue
     "value": (75, curses.COLOR_CYAN),
     "label": (245, curses.COLOR_WHITE),
     "accent": (213, curses.COLOR_MAGENTA),

@@ -30,8 +30,8 @@ HINTS = [
 @dataclass
 class Window:
     label: str
-    pct: float | None
-    left: str  # human countdown, e.g. "2h 15m left"
+    pct: float | None   # percent *used*
+    resets: str         # compact countdown to reset, e.g. "2h15m" / "3d4h"
 
 
 @dataclass
@@ -58,15 +58,15 @@ class Entry:
             for key, label in (("five_hour", "5h"), ("seven_day", "wk")):
                 w = usage.get(key)
                 if w:
-                    cd = w.get("countdown", "")
-                    out.append(Window(label, w.get("pct"), f"{cd} left" if cd else ""))
+                    cd = (w.get("countdown") or "").replace(" ", "")
+                    out.append(Window(label, w.get("pct"), cd))
             return out
         out = []
         for key, label, style in (("primary", "5h", "hm"), ("secondary", "wk", "dh")):
             w = usage.get(key)
             if w:
-                cd = fmt_countdown(w.get("resets_at"), style=style)
-                out.append(Window(label, w.get("used_percent"), f"{cd} left" if cd else ""))
+                cd = fmt_countdown(w.get("resets_at"), style=style).replace(" ", "")
+                out.append(Window(label, w.get("used_percent"), cd))
         return out
 
 
@@ -278,14 +278,15 @@ class App:
         right = left + width - 2
         avail = right - inner
         email_w = max((len(e.email) for e in self.entries()), default=10)
-        email_w = min(email_w, max(14, avail - 52))
+        email_w = min(email_w, max(12, avail - 72))  # leave room for bars + resets
         y = top + 1
         flat = 0
-        sections = [("CLAUDE", self.claude_entries), ("CODEX", self.codex_entries)]
-        for label, entries in sections:
+        sections = [("CLAUDE", "claude", self.claude_entries),
+                    ("CODEX", "codex", self.codex_entries)]
+        for label, prole, entries in sections:
             if y >= top + height - 1:
                 break
-            self._put(stdscr, y, inner, label, theme.attr("muted", bold=True))
+            self._put(stdscr, y, inner, label, theme.attr(prole, bold=True))
             y += 1
             for e in entries:
                 if y >= top + height - 1:
@@ -295,13 +296,12 @@ class App:
                 flat += 1
 
     def _draw_account_row(self, stdscr, y, inner, right, e: Entry, selected, email_w):
+        prole = "claude" if e.provider == "claude" else "codex"
         self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ",
                   theme.attr("accent", bold=True))
-        dot_attr = theme.attr("good") if e.active else theme.attr("muted")
-        if e.active:
-            email_attr = theme.attr("good", bold=True)
-        else:
-            email_attr = theme.attr("text", bold=selected)
+        # Active account gets a green status dot; otherwise the provider's tint.
+        dot_attr = theme.attr("good") if e.active else theme.attr(prole)
+        email_attr = theme.attr(prole, bold=(e.active or selected))
 
         email = e.email if len(e.email) <= email_w else e.email[: email_w - 1] + "…"
         segs = [
@@ -323,10 +323,13 @@ class App:
             remaining = None if w.pct is None else 100 - w.pct
             bar_str, role = theme.bar(remaining)
             pct = f"{round(remaining):>3}% left" if remaining is not None else "   ? left"
+            reset = f" {theme.RESET_GLYPH}{w.resets}" if w.resets else ""
             segs += [
                 (f"{w.label} ", theme.attr("label")),
                 (bar_str + " ", theme.attr(role)),
-                (pct + "  ", theme.attr(role, bold=True)),
+                (pct, theme.attr(role, bold=True)),
+                (reset, theme.attr("muted")),
+                ("   ", 0),
             ]
         self._segs_clip(stdscr, y, inner + 1, right, segs)
 
