@@ -278,7 +278,7 @@ class App:
         right = left + width - 2
         avail = right - inner
         email_w = max((len(e.email) for e in self.entries()), default=10)
-        email_w = min(email_w, max(12, avail - 72))  # leave room for bars + resets
+        email_w = min(email_w, max(12, avail - 86))  # leave room for bars + "resets in" text
         y = top + 1
         flat = 0
         sections = [("CLAUDE", "claude", self.claude_entries),
@@ -327,7 +327,7 @@ class App:
             remaining = None if w.pct is None else 100 - w.pct
             bar_str, role = theme.bar(remaining)
             pct = f"{round(remaining):>3}% left" if remaining is not None else "   ? left"
-            reset = f" in {w.resets}" if w.resets else ""
+            reset = f" · resets in {w.resets}" if w.resets else ""
             segs += [
                 (f"{w.label} ", theme.attr("label")),
                 (bar_str + " ", theme.attr(role)),
