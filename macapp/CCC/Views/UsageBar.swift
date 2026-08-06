@@ -15,10 +15,11 @@ struct UsageBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            // Wide enough for model-scoped window ids like "fable", not just "5h"/"wk".
             Text(window.id)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
-                .frame(width: 18, alignment: .leading)
+                .frame(width: 34, alignment: .leading)
 
             if let left = window.pctLeft {
                 Capsule()

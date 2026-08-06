@@ -18,8 +18,8 @@ enum CCCError: LocalizedError {
 }
 
 /// The only place that spawns processes. All invocations are strictly
-/// serialized (see `serialized`) so concurrent cswap/codex-auth runs never
-/// stomp on each other's state files.
+/// serialized (see `serialized`) so concurrent provider refreshes never
+/// contend for the same state files.
 actor CCCClient {
     static let shared = CCCClient()
 
@@ -28,21 +28,15 @@ actor CCCClient {
 
     // MARK: - Environment
 
-    /// GUI apps inherit a bare PATH (/usr/bin:/bin:...). ccc and the tools it
-    /// drives (cswap, codex-auth, ccusage, npx) live in user-level bins, so
-    /// every child process gets this augmented PATH.
+    /// GUI apps inherit a bare PATH (/usr/bin:/bin:...). The companion `ccc`
+    /// executable commonly lives in a user-level bin, so augment PATH.
     static func augmentedPATH() -> String {
         let home = NSHomeDirectory()
-        var paths = [
+        let paths = [
             "\(home)/.local/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
         ]
-        // nvm-managed node bins (codex-auth/ccusage are often npm globals)
-        let nvmVersions = "\(home)/.nvm/versions/node"
-        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmVersions) {
-            paths += versions.sorted(by: >).map { "\(nvmVersions)/\($0)/bin" }
-        }
         let base = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         return (paths + [base]).joined(separator: ":")
     }
@@ -90,6 +84,13 @@ actor CCCClient {
     // MARK: - Public API
 
     func snapshot(refresh: Bool) async throws -> Snapshot {
+        #if DEBUG
+        // Deterministic, token-safe visual verification without reading live accounts.
+        if let path = ProcessInfo.processInfo.environment["CCC_SNAPSHOT_FIXTURE"] {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            return try JSONDecoder().decode(Snapshot.self, from: data)
+        }
+        #endif
         var args = ["snapshot"]
         if !refresh { args.append("--no-refresh") }
         let data = try await runCCC(arguments: args, timeout: refresh ? 120 : 15)
@@ -98,6 +99,17 @@ actor CCCClient {
 
     func switchAccount(provider: String, num: String) async throws {
         _ = try await runCCC(arguments: ["switch", provider, num], timeout: 30)
+    }
+
+    func saveCurrentClaudeLogin(num: String) async throws {
+        _ = try await runCCC(arguments: ["account", "save", "claude", num], timeout: 30)
+    }
+
+    func consumeCodexReset(num: String, creditID: String?) async throws {
+        var arguments = ["reset", "codex", num]
+        if let creditID { arguments += ["--credit-id", creditID] }
+        arguments.append("--confirm")
+        _ = try await runCCC(arguments: arguments, timeout: 30)
     }
 
     // MARK: - Process plumbing

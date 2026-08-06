@@ -83,25 +83,24 @@ def print_verified_usage(provider: str, match: str) -> None:
 
 
 def login_codex(stay: bool) -> int:
-    prev = next((a.email for a in codex.load_accounts(refresh=False) if a.active), None)
+    prev = next((a.account_key for a in codex.load_accounts(refresh=False) if a.active), None)
     print("Opening the OpenAI login page in your browser — sign in with the account to (re-)authenticate.")
-    rc = subprocess.run(["codex-auth", "login"]).returncode
-    if rc != 0:
-        return rc
-
-    new = next((a.email for a in codex.load_accounts(refresh=False) if a.active), None)
-    if not stay and prev and new and new != prev:
+    try:
+        logged_in = codex.login()
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if not stay and prev and logged_in.account_key != prev:
         print(dim(f"restoring active account: {prev}"))
-        subprocess.run(["codex-auth", "switch", prev], stdout=subprocess.DEVNULL)
-    if new:
-        print_verified_usage("codex", new)
+        codex.switch_account(prev)
+    print_verified_usage("codex", logged_in.email)
     return 0
 
 
 def login_claude(query: str | None, stay: bool) -> int:
     accounts, _ = claude.load_accounts(refresh=False)
     if not accounts:
-        print("no claude-swap accounts found — run `cswap --add-account` first", file=sys.stderr)
+        print("no Claude accounts found — run `ccc account add claude` first", file=sys.stderr)
         return 1
 
     active = next((a for a in accounts if a.active), None)
@@ -122,9 +121,11 @@ def login_claude(query: str | None, stay: bool) -> int:
     swapped = active is None or target.num != active.num
     if swapped:
         print(dim(f"switching active Claude account to slot {target.num} ({target.email})"))
-        rc = subprocess.run(["cswap", "--switch-to", target.num]).returncode
-        if rc != 0:
-            return rc
+        try:
+            claude.switch_account(target.num)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     if copy_to_clipboard(target.email):
         print(dim(f"({target.email} copied to clipboard)"))
@@ -132,28 +133,46 @@ def login_claude(query: str | None, stay: bool) -> int:
     print(bold(f"Claude Code will open — sign in as {cyan(target.email)}."))
     print("If login doesn't start automatically, type /login. When done, exit Claude Code (/exit).")
     print()
-    subprocess.run(["claude", "/login"])
-
-    if swapped and not stay and active is not None:
-        print(dim(f"restoring active account: slot {active.num} ({active.email})"))
-        rc = subprocess.run(["cswap", "--switch-to", active.num]).returncode
-        if rc != 0:
-            print("warning: failed to switch back — check `cswap --list`", file=sys.stderr)
+    rc = 0
+    captured = False
+    try:
+        try:
+            rc = subprocess.run(["claude", "/login"]).returncode
+        except FileNotFoundError:
+            print("official `claude` CLI not found", file=sys.stderr)
+            rc = 127
+        # Claude may return a non-zero status when its interactive shell is
+        # closed after a successful login. Capture based on the authenticated
+        # identity, not the shell exit code.
+        try:
+            claude.save_current_account(target.num)
+            captured = True
+            rc = 0
+            print(dim(f"saved refreshed credentials for {target.email}"))
+        except (OSError, ValueError) as exc:
+            print(f"warning: could not store refreshed Claude credentials: {exc}", file=sys.stderr)
+    finally:
+        if swapped and not stay and active is not None and captured:
+            print(dim(f"restoring active account: slot {active.num} ({active.email})"))
+            try:
+                claude.switch_account(active.num)
+            except (OSError, ValueError):
+                print("warning: failed to switch back — check `ccc list`", file=sys.stderr)
+        elif swapped and not captured:
+            print("warning: fresh Claude session left active because it was not safely saved", file=sys.stderr)
+    if rc:
+        return rc
     print_verified_usage("claude", target.num)
     return 0
 
 
 def switch_account(provider: str, query: str) -> tuple[int, str]:
     """Non-interactive account switch. Returns (returncode, message)."""
-    if provider == "claude":
-        cmd = ["cswap", "--switch-to", query]
-    else:
-        cmd = ["codex-auth", "switch", query]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-    except FileNotFoundError:
-        return 127, f"{cmd[0]} not found on PATH"
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        return result.returncode, detail[-1] if detail else "switch failed"
+        if provider == "claude":
+            claude.switch_account(query)
+        else:
+            codex.switch_account(query)
+    except (OSError, ValueError) as exc:
+        return 1, str(exc)
     return 0, f"switched {provider} active account to {query}"

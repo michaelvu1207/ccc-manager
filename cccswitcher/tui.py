@@ -16,7 +16,7 @@ import threading
 from dataclasses import dataclass
 
 from . import actions, claude, codex, monthly, theme
-from .render import fmt_countdown, fmt_duration, fmt_money, fmt_tokens
+from .render import fmt_countdown, fmt_duration
 
 HINTS = [
     ("↑/↓", "move"),
@@ -91,9 +91,8 @@ class App:
 
         Plain daemon threads, not ThreadPoolExecutor: concurrent.futures
         joins its workers at interpreter exit, so `q` would hang on any
-        in-flight cswap/codex-auth/ccusage subprocess. Accounts (fast) are
-        published as soon as both providers load; ccusage stats (slow,
-        possibly npx) fill in afterwards.
+        in-flight provider API/local-log work. Accounts are published as soon
+        as both providers load; native local-log stats fill in afterwards.
         """
         results: dict = {}
 
@@ -375,12 +374,12 @@ class App:
             totals["7d"] += s.last7_cost
             totals["30d"] += s.last30_cost
             by_month = {m.month: m for m in s.months}
-            line = f"{fmt_money(s.last7_cost):>{col}}{fmt_money(s.last30_cost):>{col}}"
+            line = f"{monthly.cost_label(s.last7_cost, s.status):>{col}}{monthly.cost_label(s.last30_cost, s.status):>{col}}"
             for mk in month_keys:
                 row = by_month.get(mk)
                 if row:
                     month_totals[mk] += row.cost
-                line += f"{(fmt_money(row.cost) if row else '—'):>{col}}"
+                line += f"{(monthly.cost_label(row.cost, row.status) if row else '—'):>{col}}"
             self._segs(stdscr, y, left + 2, [
                 (f"{name:<{name_w}}", theme.attr("text", bold=True)),
                 (line, theme.attr("value"))])
@@ -389,9 +388,10 @@ class App:
         self._put(stdscr, y, left, theme.HZ * (width - 2), theme.attr("frame"))
         y += 1
         self._put(stdscr, y, left, theme.DOTTED, theme.attr("accent"))
-        tline = f"{fmt_money(totals['7d']):>{col}}{fmt_money(totals['30d']):>{col}}"
+        total_status = monthly.combine_status([s.status for s in self.stats.values() if s])
+        tline = f"{monthly.cost_label(totals['7d'], total_status):>{col}}{monthly.cost_label(totals['30d'], total_status):>{col}}"
         for mk in month_keys:
-            tline += f"{fmt_money(month_totals[mk]):>{col}}"
+            tline += f"{monthly.cost_label(month_totals[mk], total_status):>{col}}"
         self._segs(stdscr, y, left + 2, [
             (f"{'Total':<{name_w}}", theme.attr("title", bold=True)),
             (tline, theme.attr("title", bold=True))])

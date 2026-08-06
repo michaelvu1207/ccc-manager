@@ -2,184 +2,205 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/ccc-banner-dark.png">
-  <img src="assets/ccc-banner-light.png" alt="Claude Code Codex Manager — a Claude Code slime and a Codex slime" width="720" />
+  <img src="assets/ccc-banner-light.png" alt="Claude Code Codex Manager" width="720" />
 </picture>
 
 # CCC · Claude Code Codex Manager
 
-**One pretty terminal dashboard for every Claude Code and Codex account you own.**
-
-See live rate-limit usage, switch accounts with a keypress, re-login when a token dies,
-and watch your combined spend — all without leaving the terminal.
-
-<sub>Built on top of [`claude-swap`](https://pypi.org/project/claude-swap/),
-[`codex-auth`](https://github.com/Loongphy/codex-auth), and
-[`ccusage`](https://github.com/ryoppippi/ccusage).</sub>
+**One self-contained account switcher and seven-day cost dashboard for Claude Code and Codex.**
 
 </div>
 
----
+CCC manages every configured Claude and Codex account, refreshes subscription
+usage, switches and re-authenticates accounts, automatically rotates away from
+quota limits, and aggregates local usage/cost in its CLI, TUI, JSON API, and
+native macOS menu-bar app.
 
-```
-╭── CCC · Claude + Codex Switcher ──────────────────────────────────────────────────────────────╮
-│                                                                                                │
-│ ╭────────────────────╮  ╭── Accounts ──────────────────────────────────────────────────────╮  │
-│ │                    │  │ CLAUDE                                                             │  │
-│ │                    │  │▌ ●  1  main-account@example.com  5h █████ 100%  wk ███░░  58%      │  │
-│ │     ꒰ ◕‿◕ ꒱        │  │  ●  2  michael@example.org       5h ███░░  69%  wk ████░  72%      │  │
-│ │      C C C         │  │  ●  3  second-alt@example.com      ⚠ needs login                   │  │
-│ │   Claude + Codex   │  │ CODEX                                                              │  │
-│ │                    │  │  ●  1  spare-alt@example.com     5h ░░░░░   0%  wk ██░░░  32%      │  │
-│ │                    │  │  ●  2  main-account@example.com  5h ████░  70%  wk ██░░░  45%      │  │
-│ ╰────────────────────╯  ╰────────────────────────────────────────────────────────────────────╯  │
-╰────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-  USAGE  ·  all accounts on this machine
-
-    PROVIDER          LAST 7D     LAST 30D          APR          MAY          JUN
-  ──────────────────────────────────────────────────────────────────────────────────────────────
-  ┊ Claude          $3,815.82    $4,076.54            —      $627.65    $3,815.97
-  ┊ Codex           $3,133.26   $54,210.82   $19,323.14   $58,857.15    $6,017.43
-  ──────────────────────────────────────────────────────────────────────────────────────────────
-  ┊ Total           $6,949.08   $58,287.37   $19,323.14   $59,484.80    $9,833.41
-
-  ↑/↓ move  •  enter switch / login  •  l re-login  •  r refresh  •  q quit
-```
-
-> On **iTerm2** and **WezTerm** the top-left tile renders the actual mascot as an
-> inline image; elsewhere it falls back to the ASCII face shown above.
-
-## Why
-
-If you juggle multiple Claude and ChatGPT/Codex subscriptions, you already have
-two separate account switchers and a usage tool, each with its own commands.
-CCC puts all of them behind one keystroke-driven dashboard: every account, both
-providers, with live usage bars and combined spend — and one key to switch or
-re-authenticate.
+It has no `claude-swap`, `codex-auth`, `ccusage`, Node, Zig, or third-party
+Python runtime dependency. Existing registries created by those tools remain
+compatible and migrate in place without deleting the source data.
 
 ## Features
 
-- 🎚️ **One list, both providers** — every Claude and Codex account in a single view.
-- 📊 **Live usage bars** — 5-hour and weekly rate-limit windows with time-remaining countdowns, colour-coded green → amber → red.
-- ⌨️ **Switch with Enter** — highlight an account, press Enter, you're on it.
-- 🔑 **One-key re-login** — dead token? Enter opens the provider's login page and restores your previous account afterwards. The email is copied to your clipboard for the account picker.
-- 💸 **Combined spend** — rolling 7-day / 30-day totals and the last few months, across every account on the machine.
-- ⚡ **Cached & offline-friendly** — pricing/cost is cached on disk, so it's instant on repeat runs and still shows last-known numbers when offline.
-- 🪶 **Zero heavy deps** — pure-Python standard library; it just drives tools you already have.
+- Unified Claude and Codex roster with active-account, plan, alias, 5-hour,
+  weekly, model-scoped, stale, and login-required states.
+- Internal add/remove/import/export/switch/alias/configuration workflows.
+- Direct provider usage refresh with token rotation and stale-cache fallback.
+- Threshold, hysteresis, cooldown, best-headroom auto-switch for either provider.
+- Seven local-calendar-day cost report with combined/provider/account/day/model
+  views, token classes, stable event deduplication, and timezone/DST correctness.
+- Exact, estimated, partial, and unknown pricing states—unknown prices never
+  appear as a misleading `$0`.
+- Curses TUI, plain CLI, additive snapshot schema v2, and native SwiftUI menu bar
+  chart with accessible loading/empty/error/detail states.
+- Standard-library Python 3.10+ runtime on macOS and Linux.
 
-## Requirements
-
-CCC is a friendly front-end — it drives these tools, so install the ones you use:
-
-| Tool | For | Install |
-|---|---|---|
-| [`claude-swap`](https://pypi.org/project/claude-swap/) (`cswap`) | Claude accounts + usage | `uv tool install claude-swap` |
-| [`codex-auth`](https://github.com/Loongphy/codex-auth) | Codex accounts + usage | `npm i -g @loongphy/codex-auth` |
-| [`ccusage`](https://github.com/ryoppippi/ccusage) | Spend / token totals | `npm i -g ccusage` |
-
-Each feature degrades gracefully if its tool is missing — install only what you need.
-Python 3.10+.
-
-## Installation
+## Install and upgrade
 
 ```sh
-# with uv (recommended)
+# recommended
 uv tool install git+https://github.com/michaelvu1207/ccc-manager
 
-# or with pipx
+# or
 pipx install git+https://github.com/michaelvu1207/ccc-manager
 ```
 
-Then just run:
+Upgrade with the same installer:
 
 ```sh
-ccc
+uv tool upgrade ccc-manager
+# or: pipx upgrade ccc-manager
 ```
+
+The official `claude` and `codex` CLIs are needed only to use those products
+and complete their interactive login flows. CCC itself does not require the old
+account switchers or cost utility.
 
 ## Usage
 
-Running `ccc` with no arguments opens the interactive dashboard.
-
-### Keys
-
-| Key | Action |
-|---|---|
-| `↑` / `↓` (or `k` / `j`) | Move between accounts |
-| `Enter` | Switch to the account — or, if its token is dead, open the login page |
-| `l` | Re-login the selected account, then restore your previous active one |
-| `r` | Refresh live usage and recompute spend |
-| `q` | Quit |
-
-### Commands
-
-Prefer plain output or scripting? Every action has a non-interactive form:
+Bare `ccc` opens the TUI on a terminal and prints a list when piped.
 
 ```sh
-ccc list                 # account list with live usage + spend summary
-ccc list --no-refresh    # cached, no network (fast)
-ccc monthly              # month-by-month token + cost table
-ccc login claude 3       # re-auth Claude slot 3 (or an email / substring)
-ccc login codex          # re-auth a Codex account (chosen in the browser)
-ccc switch claude 2      # switch active account directly
+ccc list                         # accounts, live quota, cost summary
+ccc list --no-refresh            # cached provider quota
+ccc monthly                      # internal local-log monthly report
+ccc snapshot                     # schema-v2 JSON for front-ends
+
+ccc account add claude           # capture the current Claude login
+ccc account add claude --slot 3 --force
+ccc account save claude 3        # safely refresh slot 3 from the matching current login
+ccc account add codex --auth /path/to/auth.json --alias work
+ccc account remove claude 2
+ccc account remove codex work
+
+ccc login claude 3               # re-auth slot, restore prior active by default
+ccc login codex                   # official Codex login, imported internally
+ccc switch claude 2
+ccc switch claude --strategy best
+ccc switch codex work
+ccc alias work client-project
+ccc reset codex work --list       # inspect available consumable resets
+ccc reset codex work --credit-id ID --confirm
+
+ccc transfer export claude backup.cswap
+ccc transfer import claude backup.cswap
+ccc transfer export codex auth.json work
+ccc transfer import codex auth.json --alias work
+
+ccc config
+ccc config set autoswitch.threshold 85
+ccc auto --once --dry-run --json claude codex
+ccc auto                         # foreground monitor for both providers
 ```
 
-## Menu bar app (macOS)
+Claude login capture is identity-checked. After signing in, CCC saves the
+current credential only when its email and organization match the requested
+slot; it will not overwrite another account. The macOS account row exposes the
+same operation with the save icon. Missing credentials and definite provider
+authentication rejection are marked as needing login. Rate limits, network
+failures, and temporary usage-API errors retain the last verified usage when
+available and otherwise show “usage temporarily unavailable” instead of a
+false login warning. After signing in, press the save icon for that account;
+CCC verifies the identity, stores the fresh credential, and refreshes usage.
 
-The same dashboard as a native SwiftUI menu bar app: live usage bars at a
-glance, one-click switching, and re-login handoff to Terminal. It's a thin
-renderer over `ccc snapshot` — the Python CLI stays the source of truth.
+Every manual or scheduled refresh also checks the currently active Claude and
+Codex login before fetching usage. If its credential changed, CCC saves the new
+value to the already-registered account with the same stable provider identity;
+an unknown or mismatched identity is never imported or allowed to overwrite a
+different account. Refresh then updates usage for every configured account.
+
+For eligible Codex plans, account rows also show the provider-reported number
+of consumable usage-limit resets (for example, “3 usage limit resets
+available”). The macOS row’s reset button opens a destructive confirmation and,
+when several resets are available, lets you select the one to use. CCC never
+consumes resets during refresh, switching, or auto-switching. The CLI requires
+`--confirm`; it refuses unconfirmed requests before making a network call.
+
+This feature uses the same first-party `wham/rate-limit-reset-credits` workflow
+as the Codex desktop app. It is not a documented public API, so CCC keeps it in
+an isolated adapter and reports provider errors without retrying consumption.
+
+TUI keys remain `↑`/`↓` (or `k`/`j`), Enter to switch/login, `l` to re-login,
+`r` to refresh, and `q` to quit.
+
+## Migration and compatibility
+
+CCC reads existing Claude `sequence.json`, config backups, portable `.enc`
+credentials, XDG/legacy roots, macOS Keychain entries, and Codex schema 2–4
+registries/auth snapshots in place. Unknown registry/config fields survive
+CCC writes.
+
+On the first macOS run after upgrading from old `claude-swap` releases, legacy
+Keychain ACLs may only permit that old interpreter to decrypt the backups. If
+`cswap` is still present, CCC performs a one-time migration through its export
+API, writes and verifies copies under the stable system-Keychain service, and
+records `.ccc-migrations.json`. It never deletes the old entries. Once migrated,
+`cswap` can be uninstalled. If it was removed too early, reinstall it once,
+run `ccc list --no-refresh`, verify switching, then remove it again.
+
+Codex registries keep their existing schema and legacy `api`/`auto_switch`
+blocks. Structural writes are atomic; import does not overwrite unless
+`--force` is supplied. Export files contain plaintext credentials and should be
+protected like the provider auth files.
+
+Both console entry points (`ccc` and `cccswitcher`), existing account slots,
+emails, organization identities, Codex stable account keys/aliases, XDG cache
+locations, and documented commands remain supported.
+
+## Seven-day cost accuracy
+
+“Past seven days” means today plus the previous six dates in the report’s local
+timezone. Aware timestamps are converted before bucketing, including DST edges.
+Claude request IDs and Codex session cumulative markers deduplicate repeated,
+streamed, archived, copied, and subagent observations before any view is summed.
+
+Local logs do not reliably record which subscription account was active for
+historical requests. CCC therefore keeps such activity in one `unattributed`
+bucket—never copies it into every account—and still lists configured accounts
+with zero attributed events. Exact log-provided cost wins. Otherwise the
+versioned built-in model table estimates known token classes. Unknown model
+prices produce partial/unknown totals with the known lower bound retained.
+These are operational estimates, not provider invoices.
+
+Data sources:
+
+- Claude: `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/**/*.jsonl`
+- Codex: `${CODEX_HOME:-~/.codex}/{sessions,archived_sessions}/**/*.jsonl`
+- Price table: `cccswitcher/pricing.py` (`pricing_version` is emitted in JSON)
+
+## macOS menu-bar app
+
+The native app renders `ccc snapshot`; it never reads tokens itself. Its compact
+chart distinguishes Claude (orange) and Codex (blue), shows today/week totals,
+and expands to provider/account/model/token details.
 
 ```sh
-brew install xcodegen        # one-time, generates the Xcode project
-cd macapp
-xcodegen generate
-xcodebuild -project CCC.xcodeproj -scheme CCC -configuration Release -derivedDataPath build build
-open build/Build/Products/Release/CCC.app
+tools/build_macapp.sh Release
+open macapp/build/Build/Products/Release/CCC.app
 ```
 
-Requires Xcode and an installed `ccc` (the app shells out to it). Toggle
-"start at login" from the popover footer.
+The development build locates `ccc` in common uv/Homebrew paths or through a
+login shell. “Start at login” uses `SMAppService`.
 
-## How it works
-
-CCC reimplements no authentication. It drives your existing tools and reads
-their state files:
-
-| Data | Source |
-|---|---|
-| Claude accounts + active | `~/.claude-swap-backup/sequence.json`, `~/.claude.json` |
-| Claude live usage | runs `cswap --list`, reads its usage cache |
-| Codex accounts + usage | runs `codex-auth list`, reads `~/.codex/accounts/registry.json` |
-| Spend / token totals | `ccusage <claude\|codex>` (cached under `~/.cache/cccswitcher/`) |
-
-### Cost caching
-
-ccusage refetches its pricing table from the network on every run, which is
-slow and fails offline (surfacing as "cannot calculate cost"). CCC caches
-ccusage's computed output under `~/.cache/cccswitcher/` (TTL via
-`CCC_STATS_TTL`, default 1h) and falls back to the last good numbers when a
-live recompute fails. Force a refresh with `r` in the TUI or `--refresh` on the
-CLI. The live per-account usage percentages always refresh from
-cswap / codex-auth — only the spend panel is cached.
-
-### Caveat: spend is per-machine
-
-ccusage derives spend from local session logs, which aren't tagged with the
-account that was active. So the spend panel is the combined total across every
-account used on this machine — which is exactly what the totals line reports.
-
-## Contributing
-
-Issues and PRs welcome — this is meant to be a fun little tool. The code is
-plain Python with no build step:
+## Development and verification
 
 ```sh
-git clone https://github.com/michaelvu1207/ccc-manager && cd ccc-manager
-uv tool install --force --reinstall .   # install your working copy
+python3 -m unittest discover -s tests -v
+python3 -m compileall -q cccswitcher
+python3 -m pip wheel --no-deps .
+tools/build_macapp.sh Debug test
 ```
 
-## License
+Provider tests use isolated homes and explicitly disable the real macOS
+Keychain. Never put real auth payloads in fixtures or screenshots.
 
-MIT — see [LICENSE](LICENSE).
+## Security and provenance
 
-<div align="center"><sub>Made for people with too many AI subscriptions. 🧡💙</sub></div>
+Secrets are held only in provider-compatible private files or macOS Keychain,
+written atomically with restrictive permissions. Snapshot/cost output contains
+no tokens. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for audited
+upstream provenance and retained MIT notices, and
+[docs/SELF_CONTAINED_ARCHITECTURE.md](docs/SELF_CONTAINED_ARCHITECTURE.md) for
+the architecture, migration, risk critique, and verification plan.
+
+CCC is MIT licensed; see [LICENSE](LICENSE).

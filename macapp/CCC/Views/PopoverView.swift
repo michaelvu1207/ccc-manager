@@ -1,23 +1,42 @@
 import SwiftUI
 
+enum PopoverTab: String, CaseIterable, Identifiable {
+    case accounts
+    case usage
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var symbol: String {
+        switch self {
+        case .accounts: "person.2"
+        case .usage: "chart.bar.xaxis"
+        }
+    }
+}
+
 struct PopoverView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedTab: PopoverTab = .accounts
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
+            tabPicker
+                .padding(.horizontal, 4)
+                .padding(.bottom, 2)
+
             Divider().padding(.bottom, 2)
 
-            if let snapshot = state.snapshot {
-                ForEach(snapshot.providers) { provider in
-                    section(for: provider)
+            Group {
+                switch selectedTab {
+                case .accounts:
+                    accountsTab
+                case .usage:
+                    usageTab
                 }
-            } else if state.errorMessage == nil {
-                ProgressView("loading accounts…")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 20)
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             if let error = state.errorMessage {
                 Label(error, systemImage: "exclamationmark.octagon.fill")
@@ -34,6 +53,37 @@ struct PopoverView: View {
         .frame(width: 340)
     }
 
+    private var tabPicker: some View {
+        Picker("Dashboard section", selection: $selectedTab) {
+            ForEach(PopoverTab.allCases) { tab in
+                Label(tab.title, systemImage: tab.symbol)
+                    .tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel("CCC dashboard section")
+    }
+
+    @ViewBuilder
+    private var accountsTab: some View {
+        if let snapshot = state.snapshot {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(snapshot.providers) { provider in
+                    section(for: provider)
+                }
+            }
+        } else if state.errorMessage == nil {
+            ProgressView("loading accounts…")
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 20)
+        }
+    }
+
+    private var usageTab: some View {
+        WeeklyCostCard()
+    }
+
     @ViewBuilder
     private var header: some View {
         let name = colorScheme == .dark ? "ccc-banner-dark" : "ccc-banner-light"
@@ -42,8 +92,9 @@ struct PopoverView: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
-                .frame(height: 120)
+                .frame(height: 104)
                 .frame(maxWidth: .infinity)
+                .accessibilityHidden(true)
         }
     }
 
@@ -54,9 +105,7 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
             if provider.accounts.isEmpty {
-                Text(provider.available
-                    ? "no accounts found"
-                    : "tool not installed (\(provider.id == "claude" ? "claude-swap" : "codex-auth"))")
+                Text(provider.available ? "no accounts found" : "provider unavailable")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 8)

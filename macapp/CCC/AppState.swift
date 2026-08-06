@@ -11,6 +11,8 @@ final class AppState: ObservableObject {
     @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     /// Account id being switched to, for optimistic UI.
     @Published var pendingSwitchID: String?
+    @Published var pendingSaveID: String?
+    @Published var pendingResetID: String?
 
     private let client = CCCClient.shared
     private var refreshTimer: Timer?
@@ -112,6 +114,30 @@ final class AppState: ObservableObject {
         Task {
             try? await Task.sleep(for: .seconds(90))
             await refresh()
+        }
+    }
+
+    func saveCurrentClaudeLogin(account: Account) async {
+        guard pendingSaveID == nil else { return }
+        pendingSaveID = account.id
+        defer { pendingSaveID = nil }
+        do {
+            try await client.saveCurrentClaudeLogin(num: account.num)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func consumeCodexReset(account: Account, creditID: String?) async {
+        guard pendingResetID == nil else { return }
+        pendingResetID = account.id
+        defer { pendingResetID = nil }
+        do {
+            try await client.consumeCodexReset(num: account.num, creditID: creditID)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
