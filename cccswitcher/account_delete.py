@@ -80,8 +80,7 @@ def describe(the_plan: dict) -> str:
     active = [s["name"] for s in the_plan["steps"] if s["active"]]
     if active:
         tool = "Claude Code" if the_plan["provider"] == "claude" else "Codex"
-        text = f"{tool} on {_join(active)} {'is' if len(active) == 1 else 'are'} using this account; " \
-               "it keeps working until it switches"
+        text = f"{tool} on {_join(active)} is using this account; it keeps working until it switches"
         lines.append(text + (", but CCC stops syncing it." if the_plan["hub"] else "."))
     if the_plan["hub"]:
         lines.append("The hub forgets the login and refuses it from every machine until you log in to "

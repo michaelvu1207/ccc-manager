@@ -1,97 +1,104 @@
 import SwiftUI
 
-/// One account, shown once however many machines store it: identity, usage
-/// (the freshest report from any machine), and a chip per machine.
+/// One account, shown once however many machines store it. Line 1: the
+/// email and one marker per machine column (see MatrixLayout); line 2: the
+/// freshest usage from any machine. The row itself does nothing on click:
+/// a machine cell switches that machine.
 struct AccountCard: View {
     @EnvironmentObject private var state: AppState
     let account: ViewAccount
     let machines: [ViewMachine]
+    var layout: MatrixLayout? = nil
 
     @State private var hovering = false
     @State private var showingResetConfirmation = false
 
     private var isClaude: Bool { account.provider == "claude" }
+    private var grid: MatrixLayout { layout ?? MatrixLayout(machines: machines.count) }
     private var localMachine: ViewMachine? { machines.first { $0.local } }
     private var localPresence: MachinePresence? { localMachine.flatMap { account.presence(on: $0.id) } }
     private var removalMachine: ViewMachine? {
         guard let key = state.confirmingRemoval, key.provider == account.provider else { return nil }
         return machines.first { state.chipKey(account, $0.id) == key && $0.id == key.machine }
     }
+    /// Needs a login on at least one machine (or the hub could not refresh it).
+    private var needsLoginSomewhere: Bool {
+        account.needsLogin || account.machines.values.contains { $0.state == .needsLogin }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // No leading marker and no click: the chips say where the account
-            // is active, and a chip is the only way to switch a machine.
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 0) {
                     titleLine
-                    if !account.orgName.isEmpty && !account.orgName.hasPrefix(account.email) {
-                        Text(account.orgName)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                        .frame(width: grid.labelWidth, alignment: .leading)
+                    Color.clear.frame(width: MatrixLayout.gap, height: 1)
+                    ForEach(machines) { machine in
+                        MachineCell(account: account, machine: machine, width: grid.columnWidth)
                     }
-                    usage
-                    FlowLayout(spacing: 4, lineSpacing: 4) {
-                        ForEach(machines) { machine in
-                            MachineChip(account: account, machine: machine)
-                        }
-                    }
-                    .padding(.top, 2)
+                    Color.clear.frame(width: MatrixLayout.gap, height: 1)
+                    rowMenu.frame(width: MatrixLayout.menuWidth)
                 }
-                Spacer(minLength: 0)
-                trailingControls
+                usageLine
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .padding(.horizontal, MatrixLayout.rowInset)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(hovering ? Color.primary.opacity(0.05) : .clear)
+                    .fill(hovering ? Color.primary.opacity(0.04) : .clear)
             )
             .onHover { hovering = $0 }
 
             if let machine = removalMachine { removalConfirmation(machine) }
             if showingResetConfirmation { resetConfirmation }
+            if state.confirmingDelete == account.key { deleteConfirmation }
         }
     }
 
     // MARK: Header
 
     private var titleLine: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Text(account.label)
                 .font(.callout)
                 .fontWeight(account.activeOn.isEmpty ? .regular : .semibold)
                 .foregroundStyle(account.disabled ? .secondary : .primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .help(titleHelp)
             if account.disabled {
                 Text("(disabled)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
                     .help("Held out of auto-rotation on every machine that stores it")
             } else if account.mixedDisabled {
-                Text("(disabled on \(account.disabledOn.count))")
+                Text("(\(account.disabledOn.count) off)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
                     .help("Disabled on: " + account.disabledOn.map { state.name(ofMachine: $0) }.joined(separator: ", "))
             }
-            if account.shared == true {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.caption2)
-                    .foregroundStyle(account.refreshError?.isEmpty == false ? Color.orange : Color.secondary)
-                    .help(account.refreshError?.isEmpty == false
-                          ? "Shared login · hub refresh failed: \(account.refreshError ?? "")"
-                          : "Shared login · the hub keeps it fresh on every machine (gen \(account.hubGeneration ?? 0))")
-            }
-            if !account.plan.isEmpty {
-                Text(account.plan)
-                    .font(.caption2)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-                    .foregroundStyle(.secondary)
-            }
+        }
+    }
+
+    private var titleHelp: String {
+        var text = account.email
+        if !account.plan.isEmpty { text += " · \(account.plan)" }
+        if !account.orgName.isEmpty && !account.orgName.hasPrefix(account.email) { text += " · \(account.orgName)" }
+        if account.shared == true { text += " · shared login, the hub keeps it fresh" }
+        if account.hubDeleted == true { text += " · deleted on the hub (copies left here)" }
+        return text
+    }
+
+    /// Usage (line 2) with the per-account buttons that need room.
+    private var usageLine: some View {
+        HStack(alignment: .top, spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) { usage }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            trailingControls
         }
     }
 
@@ -126,20 +133,29 @@ struct AccountCard: View {
         }
     }
 
-    /// "as of 5m ago from path-pc" — only when it matters (stale or remote).
+    /// "last known 5m ago from path-pc" — only when the usage is stale.
     private var sourceCaption: String? {
-        guard let from = account.usageFrom else { return nil }
-        let isLocal = machines.first { $0.id == from }?.local ?? false
-        guard account.usageStale || !isLocal else { return nil }
+        guard let from = account.usageFrom, account.usageStale else { return nil }
         var text = account.usageStale ? "last known" : "as of"
         if let at = account.usageAt { text += " \(MachineSection.age(since: at)) ago" }
         return text + " from \(state.name(ofMachine: from))"
     }
 
-    // MARK: Trailing controls (0.17 save / reset + row menu)
+    // MARK: Trailing controls (re-login, 0.17 save / reset) and the row menu
 
     private var trailingControls: some View {
         HStack(spacing: 6) {
+            if needsLoginSomewhere {
+                Button {
+                    state.reLoginAccount(account)
+                } label: {
+                    Label("Re-login", systemImage: "person.badge.key")
+                        .font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.orange)
+                .help(reLoginHelp)
+            }
             if isClaude, let local = localMachine, let num = localPresence?.num {
                 Button {
                     Task { await state.saveCurrentClaudeLogin(num: num, id: account.key) }
@@ -148,12 +164,13 @@ struct AccountCard: View {
                         ProgressView().controlSize(.mini)
                     } else {
                         Image(systemName: "square.and.arrow.down")
+                            .font(.caption)
                     }
                 }
                 .buttonStyle(.borderless)
                 .help("Save the current Claude login on \(local.name) for \(account.email)")
                 .accessibilityLabel("Save current Claude login for \(account.email)")
-                .opacity(hovering ? 1 : 0.55)
+                .opacity(hovering ? 1 : 0)
             } else if !isClaude, localPresence?.num != nil, (account.consumableResets ?? 0) > 0 {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { showingResetConfirmation.toggle() }
@@ -168,40 +185,61 @@ struct AccountCard: View {
                 .disabled(state.pendingResetID != nil)
                 .help("Use a Codex usage-limit reset for \(account.email)")
             }
-            Menu {
-                if isClaude && !account.storedOn.isEmpty {
-                    Button("Disable everywhere") {
-                        Task { await state.setDisabledEverywhere(true, account: account) }
-                    }
-                    .disabled(account.disabled)
-                    Button("Enable everywhere") {
-                        Task { await state.setDisabledEverywhere(false, account: account) }
-                    }
-                    .disabled(account.disabledOn.isEmpty)
-                    Divider()
-                }
-                if let shared = account.shared {
-                    Button(shared ? "Stop sharing this login" : "Share this login with all machines") {
-                        Task { await state.setShared(!shared, account: account) }
-                    }
-                    Divider()
-                }
-                Button("Copy email") { state.copyEmail(account) }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .opacity(hovering ? 1 : 0)
-            .allowsHitTesting(hovering)
-            .help("Account actions")
         }
-        .padding(.top, 1)
+    }
+
+    private var reLoginHelp: String {
+        switch AppState.reloginPlan(account: account, machines: machines, syncEnabled: state.syncEnabled) {
+        case .syncLogin:
+            return "Opens Terminal: sign in as \(account.email) on this Mac; the hub replaces the login on every machine"
+        case .machineLogin(let id, _):
+            return "Opens Terminal: sign in as \(account.email) on \(state.name(ofMachine: id))"
+        case .codex:
+            return "Opens the Codex login in your browser"
+        case .guidance(let text):
+            return text
+        }
+    }
+
+    private var rowMenu: some View {
+        Menu {
+            Button("Re-login…") { state.reLoginAccount(account) }
+            if isClaude && !account.storedOn.isEmpty {
+                Divider()
+                Button("Disable everywhere") {
+                    Task { await state.setDisabledEverywhere(true, account: account) }
+                }
+                .disabled(account.disabled)
+                Button("Enable everywhere") {
+                    Task { await state.setDisabledEverywhere(false, account: account) }
+                }
+                .disabled(account.disabledOn.isEmpty)
+            }
+            if let shared = account.shared {
+                Button(shared ? "Stop sharing this login" : "Share this login with all machines") {
+                    Task { await state.setShared(!shared, account: account) }
+                }
+            }
+            Divider()
+            Button("Copy email") { state.copyEmail(account) }
+            Divider()
+            Button("Delete account…", role: .destructive) {
+                withAnimation(.easeInOut(duration: 0.15)) { state.confirmingDelete = account.key }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: MatrixLayout.menuWidth, height: 16)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .opacity(hovering || state.confirmingDelete == account.key ? 1 : 0)
+        .allowsHitTesting(hovering)
+        .help("Account actions")
+        .accessibilityLabel("Actions for \(account.email)")
     }
 
     // MARK: Confirmations
@@ -223,6 +261,50 @@ struct AccountCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
+            }
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.red.opacity(0.25), lineWidth: 1))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
+    }
+
+    private var deleteConfirmation: some View {
+        let deleting = state.pendingDelete == account.key
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Delete \(account.email) everywhere?")
+                .font(.caption.weight(.semibold))
+            if let warning = AppState.deleteWarning(
+                account: account, name: { state.name(ofMachine: $0) },
+                syncing: state.syncEnabled && isClaude) {
+                Text(warning)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(state.syncEnabled && isClaude
+                 ? "The hub forgets the login and every machine drops its copy. Log in to it again to bring it back."
+                 : "Every machine that stores it removes its saved login.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                if deleting {
+                    ProgressView().controlSize(.mini)
+                    Text("Deleting…").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel") { state.confirmingDelete = nil }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(deleting)
+                Button("Delete", role: .destructive) {
+                    Task { await state.deleteAccount(account) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(deleting)
             }
             .controlSize(.small)
         }

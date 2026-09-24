@@ -115,6 +115,7 @@ private struct MachineConfigRow: View {
 
     @State private var editing = false
     @State private var draft = ""
+    @State private var shortDraft = ""
     @State private var hovering = false
     @FocusState private var nameFocused: Bool
 
@@ -129,12 +130,21 @@ private struct MachineConfigRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 if editing {
-                    TextField("Name", text: $draft)
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.small)
-                        .focused($nameFocused)
-                        .onSubmit(commit)
-                        .onExitCommand { editing = false }
+                    HStack(spacing: 4) {
+                        TextField("Name", text: $draft)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
+                            .focused($nameFocused)
+                            .onSubmit(commit)
+                            .onExitCommand { editing = false }
+                        TextField("Short", text: $shortDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
+                            .frame(width: 64)
+                            .onSubmit(commit)
+                            .onExitCommand { editing = false }
+                            .help("Column label on the Accounts tab (up to 10 characters; empty = automatic)")
+                    }
                 } else {
                     HStack(spacing: 5) {
                         Text(machine.name)
@@ -164,7 +174,7 @@ private struct MachineConfigRow: View {
                 } label: {
                     Image(systemName: editing ? "checkmark" : "pencil")
                 }
-                .help(editing ? "Save name" : "Rename")
+                .help(editing ? "Save" : "Rename / short name")
 
                 if !machine.local {
                     Button {
@@ -199,6 +209,9 @@ private struct MachineConfigRow: View {
 
     private var subtitle: String {
         var parts = [machine.local ? "this Mac" : "ssh \(machine.alias ?? "")"]
+        if let column = state.view?.machines.first(where: { $0.id == machine.id })?.shortName {
+            parts.append("“\(column)”")
+        }
         if !machine.enabled {
             parts.append("paused")
         } else if let snapshot {
@@ -216,13 +229,18 @@ private struct MachineConfigRow: View {
 
     private func startEditing() {
         draft = machine.name
+        shortDraft = machine.short ?? ""
         editing = true
         nameFocused = true
     }
 
     private func commit() {
         editing = false
-        Task { await state.renameMachine(machine, to: draft) }
+        let (name, short) = (draft, String(shortDraft.prefix(10)))
+        Task {
+            await state.renameMachine(machine, to: name)
+            await state.setShortName(machine, to: short)
+        }
     }
 }
 

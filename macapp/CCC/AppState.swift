@@ -23,6 +23,9 @@ final class AppState: ObservableObject {
     @Published private(set) var pendingAction: AccountKey?
     /// Account whose "Remove…" awaits the inline confirmation.
     @Published var confirmingRemoval: AccountKey?
+    /// Account (view key) whose "Delete account…" awaits the confirmation.
+    @Published var confirmingDelete: String?
+    @Published private(set) var pendingDelete: String?
     @Published private(set) var collapsed: Set<String>
     @Published var showingMachines = false
     @Published private(set) var machineList: MachineList?
@@ -380,6 +383,95 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Whole-account actions (row menu)
+
+    enum ReloginPlan: Equatable {
+        /// `ccc sync login --email`: the hub replaces the login everywhere.
+        case syncLogin(email: String)
+        /// The per-machine re-login (`ccc login claude --machine`).
+        case machineLogin(machine: String, num: String?)
+        /// Codex: the browser login on this Mac.
+        case codex(machine: String)
+        case guidance(String)
+    }
+
+    /// How "Re-login" works for an account: with sync, one login on this Mac
+    /// replaces it on every machine; without, the machine that needs it.
+    static func reloginPlan(account: ViewAccount, machines: [ViewMachine], syncEnabled: Bool) -> ReloginPlan {
+        if account.provider == "codex" {
+            if let local = machines.first(where: { $0.local }) { return .codex(machine: local.id) }
+            let name = machines.first { account.presence(on: $0.id)?.isPresent == true }?.name ?? "that machine"
+            return .guidance("Codex login opens a browser; run `codex login` on \(name).")
+        }
+        if syncEnabled && account.shared != false {
+            return .syncLogin(email: account.email)
+        }
+        let present = machines.filter {
+            guard let p = account.presence(on: $0.id) else { return false }
+            return p.isPresent && p.state != .offline
+        }
+        let target = present.first { account.presence(on: $0.id)?.state == .needsLogin }
+            ?? present.first { $0.local } ?? present.first
+        guard let target else {
+            return .guidance("\(account.email) is not stored on a reachable machine; use a machine's + to sign in there.")
+        }
+        return .machineLogin(machine: target.id, num: account.presence(on: target.id)?.num)
+    }
+
+    func reLoginAccount(_ account: ViewAccount) {
+        switch Self.reloginPlan(account: account, machines: view?.machines ?? [], syncEnabled: syncEnabled) {
+        case .syncLogin(let email):
+            do { try LoginLauncher.openSyncLogin(email: email) } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+            refreshSoon()
+        case .machineLogin(let id, let num):
+            do { try LoginLauncher.openLogin(machine: id, provider: "claude", num: num) } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+            refreshLater(id)
+        case .codex(let id):
+            openCodexLogin(machineID: id)
+        case .guidance(let text):
+            errorMessage = text
+        }
+    }
+
+    /// "Claude Code on A and B is using this account; …" — nil if active nowhere.
+    static func deleteWarning(account: ViewAccount, name: (String) -> String, syncing: Bool) -> String? {
+        let names = account.activeOn.map(name)
+        guard !names.isEmpty else { return nil }
+        let list = names.count == 1 ? names[0]
+            : names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        let tool = account.provider == "claude" ? "Claude Code" : "Codex"
+        return "\(tool) on \(list) is using this account; it keeps working until it switches"
+            + (syncing ? ", but CCC stops syncing it." : ".")
+    }
+
+    /// Delete everywhere (`ccc delete`), then refresh until the row is gone.
+    func deleteAccount(_ account: ViewAccount) async {
+        guard pendingDelete == nil else { return }
+        pendingDelete = account.key
+        defer { pendingDelete = nil }
+        do {
+            try await client.deleteAccount(email: account.email, provider: account.provider)
+        } catch {
+            errorMessage = "Delete \(account.email): \(error.localizedDescription)"
+            return
+        }
+        confirmingDelete = nil
+        errorMessage = nil
+        await refresh()
+        Task {  // sync agents remove their copies within seconds
+            for delay in [10.0, 30.0] {
+                try? await Task.sleep(for: .seconds(delay))
+                await refresh()
+            }
+        }
+    }
+
     /// Sync is set up, so a login on this Mac reaches every machine.
     var syncEnabled: Bool { sync?.enabled == true }
 
@@ -502,6 +594,12 @@ final class AppState: ObservableObject {
 
     func removeMachine(_ machine: MachineConfig) async {
         _ = await editMachines(["remove", "--", machine.id], refreshNew: false)
+    }
+
+    func setShortName(_ machine: MachineConfig, to short: String) async {
+        let trimmed = short.trimmingCharacters(in: .whitespaces)
+        guard trimmed != (machine.short ?? "") else { return }
+        _ = await editMachines(["short", "--", machine.id] + (trimmed.isEmpty ? [] : [trimmed]), refreshNew: false)
     }
 
     func renameMachine(_ machine: MachineConfig, to name: String) async {

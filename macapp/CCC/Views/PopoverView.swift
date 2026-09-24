@@ -104,27 +104,29 @@ struct PopoverView: View {
         }
     }
 
-    /// One row per account (Claude, then Codex), each with a chip per machine.
+    /// The account matrix: machine column headers once, then one line per
+    /// account (Claude, then Codex) with a marker under each machine.
     @ViewBuilder
     private func accountList(_ view: AccountsView) -> some View {
+        let layout = MatrixLayout(machines: view.machines.count)
         loginButton
-        machineStrip(view.machines)
+        MatrixHeader(machines: view.machines, layout: layout)
         ForEach(["claude", "codex"], id: \.self) { provider in
             let rows = view.accounts.filter { $0.provider == provider }
             if !rows.isEmpty {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text(provider.uppercased())
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, MatrixLayout.rowInset)
                     ForEach(rows) { account in
-                        AccountCard(account: account, machines: view.machines)
+                        AccountCard(account: account, machines: view.machines, layout: layout)
                     }
                 }
             }
         }
         if view.accounts.isEmpty {
-            Text("No accounts yet — add one from a machine below.")
+            Text("No accounts yet — log in with the button above.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 8)
@@ -146,41 +148,6 @@ struct PopoverView: View {
         .help(state.syncEnabled
               ? "Opens Terminal: sign in once on this Mac; the hub shares it with every machine"
               : "Opens Terminal: sign in and store the account on this Mac")
-    }
-
-    /// Machine status line: loading / offline at a glance, plus "add account".
-    private func machineStrip(_ machines: [ViewMachine]) -> some View {
-        FlowLayout(spacing: 8, lineSpacing: 4) {
-            ForEach(machines) { machine in
-                Menu {
-                    Text(machine.name + (machine.online ? "" : " — offline"))
-                    Button("Add a Claude account here…") { state.addAccount(machineID: machine.id) }
-                        .disabled(!machine.online)
-                    Button("Refresh") { Task { await state.refresh(machineID: machine.id) } }
-                } label: {
-                    HStack(spacing: 3) {
-                        if state.loadingMachines.contains(machine.id) {
-                            ProgressView().controlSize(.mini).scaleEffect(0.6).frame(width: 8, height: 8)
-                        } else {
-                            Circle()
-                                .fill(machine.online ? Color.green : Color.red)
-                                .frame(width: 5, height: 5)
-                        }
-                        Image(systemName: platformSymbol(machine.platform, local: machine.local))
-                            .font(.system(size: 9))
-                        Text(machine.shortName)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("\(machine.name) — \(machine.online ? "online" : "offline")")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 2)
     }
 
     private var duplicatesCaption: String {

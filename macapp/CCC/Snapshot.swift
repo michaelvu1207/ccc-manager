@@ -315,6 +315,8 @@ struct MachineConfig: Codable, Identifiable, Equatable {
     let local: Bool
     let enabled: Bool
     let engine: String?
+    /// 0.22: the user's column label ("" or nil = derived).
+    var short: String? = nil
 }
 
 struct MachineList: Codable {
@@ -423,6 +425,8 @@ struct ViewAccount: Codable, Identifiable {
     var refreshError: String? = nil
     /// 0.21.1: a healthy shared login with no usage read yet.
     var usagePending: Bool? = nil
+    /// 0.22: deleted on the sync hub; copies left on some machines.
+    var hubDeleted: Bool? = nil
 
     var id: String { key }
 
@@ -443,6 +447,7 @@ struct ViewAccount: Codable, Identifiable {
         case hubGeneration = "hub_generation"
         case refreshError = "refresh_error"
         case usagePending = "usage_pending"
+        case hubDeleted = "hub_deleted"
     }
 
     func presence(on machine: String) -> MachinePresence? { machines[machine] }

@@ -159,7 +159,7 @@ class DeletePlan(unittest.TestCase):
             ask.assert_called_once()
             self.assertEqual(calls, [])
             text = out.getvalue()
-            self.assertIn("Claude Code on path-brower and simforge-a100 are using this account; "
+            self.assertIn("Claude Code on path-brower and simforge-a100 is using this account; "
                           "it keeps working until it switches.", text)
             self.assertNotIn("stops syncing", text)
 
@@ -193,7 +193,7 @@ class DeletePlan(unittest.TestCase):
         self.assertEqual({s["machine"]: s["how"] for s in the_plan["steps"]},
                          {"local": "here", "box": "agent", "gpu": "remove", "old": "offline"})
         text = account_delete.describe(the_plan)
-        self.assertIn("Claude Code on path-brower and simforge-a100 are using this account; "
+        self.assertIn("Claude Code on path-brower and simforge-a100 is using this account; "
                       "it keeps working until it switches, but CCC stops syncing it.", text)
         self.assertIn(f"ccc sync login --email {EMAIL}", text)
 
