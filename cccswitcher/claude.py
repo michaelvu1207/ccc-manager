@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cache
+from . import cache, sync_config
 from .storage import atomic_write_json, atomic_write_text, file_lock, read_json
 
 USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -31,6 +31,11 @@ OAUTH_BETA = "oauth-2025-04-20"
 MODEL_LIMITS_CACHE = "claude_model_limits"
 MODEL_LIMITS_TTL = 86400
 MODEL_LIMITS_MIN_REFRESH = 600
+# Refresh an unshared login when less than this is left on its access token.
+REFRESH_WINDOW_MS = 300_000
+# Usage states of a shared (hub-refreshed) login. Neither needs a login.
+WAITING_FOR_HUB = "waiting for hub"   # local copy expired; the hub refreshes it
+USAGE_PENDING = "usage pending"       # just synced; no usage measured yet
 
 
 def config_home() -> Path:
@@ -67,7 +72,22 @@ def sequence_file() -> Path:
 
 
 def usage_cache_path() -> Path:
+    # CCC's own file. cswap 0.26 owns cache/usage.json (schemaVersion 2) and
+    # overwrites a version-less file, which left CCC reading "no usage".
+    return backup_dir() / "cache" / "ccc-usage.json"
+
+
+def _legacy_usage_cache_path() -> Path:
     return backup_dir() / "cache" / "usage.json"
+
+
+def _read_usage_cache() -> dict:
+    """{"timestamp", "data": {num: usage}}; falls back to a 0.17-0.21.0 file."""
+    for path in (usage_cache_path(), _legacy_usage_cache_path()):
+        data = read_json(path, None)
+        if isinstance(data, dict) and isinstance(data.get("data"), dict) and "schemaVersion" not in data:
+            return data
+    return {}
 
 
 @dataclass
@@ -81,6 +101,8 @@ class ClaudeAccount:
     kind: str = "oauth"
     # Held out of auto-rotation (`cswap disable`-compatible registry flag).
     disabled: bool = False
+    # A shared login: the sync hub refreshes it; this machine never does.
+    shared: bool = False
 
 
 def cswap_available() -> bool:
@@ -369,7 +391,10 @@ def _oauth(value: str) -> dict | None:
         return None
 
 
-def _refresh_credentials(value: str, token_url: str = TOKEN_URL) -> str | None:
+def _refresh_credentials(value: str, token_url: str | None = None) -> str | None:
+    """POST the refresh token (rotates it). Never call this for a shared login
+    except from the sync hub: see `_shared_nums`."""
+    token_url = token_url or TOKEN_URL
     try:
         root = json.loads(value)
         oauth = root.get("claudeAiOauth")
@@ -437,6 +462,53 @@ def _normalize_usage(data: dict) -> dict | None:
     return result or None
 
 
+def _expires_ms(value: str) -> float:
+    raw = (_oauth(value) or {}).get("expiresAt")
+    return float(raw) if isinstance(raw, (int, float)) else 0.0
+
+
+def _shared_nums(registry: dict) -> set[str]:
+    """Slots holding a login the sync hub shares — and so refreshes.
+
+    Refresh tokens rotate: a second refresher kills the hub's copy. So when
+    sync is set up, CCC never refreshes these locally; the agent pulls the
+    hub's fresh copy instead. Empty when sync is off.
+    """
+    try:
+        shared = sync_config.hub_shared_keys()
+    except (OSError, ValueError):
+        shared = None
+    if shared is None:
+        return set()
+    keys, authoritative = shared
+    out = set()
+    for raw in registry.get("sequence", []):
+        num = str(raw)
+        info = registry.get("accounts", {}).get(num, {})
+        if (info.get("kind") or "oauth") != "oauth":
+            continue
+        key = sync_config.account_key("claude", info.get("email", ""), info.get("organizationUuid") or "")
+        if key in keys or (not authoritative and info.get("source") == "ccc-sync"):
+            out.add(num)
+    return out
+
+
+def pull_from_hub(timeout: float = 5.0) -> bool:
+    """Pull the hub's shared logins once (reads from the hub; never refreshes).
+
+    Used when a shared login's local copy has expired, e.g. right after
+    wake, before the agent service has caught up.
+    """
+    try:
+        from . import sync_agent  # sync_agent imports this module
+        client = sync_agent.client_from_config()
+        client.timeout = timeout
+        sync_agent.run_once(client, lock_timeout=2.0, push=False, report="never", fetch_usage=False)
+        return True
+    except Exception:  # best effort: the agent service pulls anyway
+        return False
+
+
 def sync_active_credentials() -> bool:
     """Save a changed live Claude credential into its identity-matched slot.
 
@@ -476,6 +548,11 @@ def sync_active_credentials() -> bool:
     config_path = _config_backup_path(target_num, email)
     stored_config = config_path.read_text(encoding="utf-8") if config_path.exists() else None
     credential_changed = live != stored
+    if credential_changed and target_num in _shared_nums(registry) and _oauth(stored) \
+            and _expires_ms(live) < _expires_ms(stored):
+        # The agent pulled a newer hub copy into the slot but could not yet
+        # replace the live login: never overwrite the newer copy with it.
+        credential_changed = False
     config_changed = config_text is not None and config_text != stored_config
     active_changed = str(registry.get("activeAccountNumber") or "") != target_num
     if not credential_changed and not config_changed and not active_changed:
@@ -492,19 +569,39 @@ def sync_active_credentials() -> bool:
     return True
 
 
-def _fetch_one(num: str, email: str, active: bool) -> tuple[str, dict | str | None]:
-    value = _active_credentials() if active else _read_backup_credentials(num, email)
+def _stored_value(num: str, email: str, active: bool) -> str:
+    return _active_credentials() if active else _read_backup_credentials(num, email)
+
+
+def _shared_copy_stale(num: str, email: str, active: bool) -> bool:
+    """True if a shared login's local copy is within the refresh window."""
+    try:
+        expires = _expires_ms(_stored_value(num, email, active))
+    except OSError:
+        return False
+    return 0 < expires <= time.time() * 1000 + REFRESH_WINDOW_MS
+
+
+def _fetch_one(num: str, email: str, active: bool, shared: bool = False) -> tuple[str, dict | str | None]:
+    value = _stored_value(num, email, active)
     oauth = _oauth(value)
     if not oauth or not oauth.get("accessToken"):
         return num, "no credentials"
     expires = oauth.get("expiresAt")
-    if isinstance(expires, (int, float)) and expires <= time.time() * 1000 + 300_000:
-        rotated = _refresh_credentials(value)
-        if rotated:
-            value, oauth = rotated, _oauth(rotated) or oauth
-            _write_backup_credentials(num, email, rotated)
-            if active:
-                _write_active_credentials(rotated)
+    now_ms = time.time() * 1000
+    if isinstance(expires, (int, float)) and expires <= now_ms + REFRESH_WINDOW_MS:
+        if shared:
+            # The hub is the one refresher of a shared login. Never call the
+            # token endpoint here; an expired copy waits for the hub's.
+            if expires <= now_ms:
+                return num, WAITING_FOR_HUB
+        else:
+            rotated = _refresh_credentials(value)
+            if rotated:
+                value, oauth = rotated, _oauth(rotated) or oauth
+                _write_backup_credentials(num, email, rotated)
+                if active:
+                    _write_active_credentials(rotated)
     try:
         req = urllib.request.Request(USAGE_API_URL, headers={
             "Authorization": f"Bearer {oauth['accessToken']}",
@@ -533,6 +630,7 @@ def refresh_usage(timeout: float = 45.0) -> bool:
     registry = _registry()
     identity = _active_identity()
     active_number = str(registry.get("activeAccountNumber") or "")
+    shared = _shared_nums(registry)
     work = []
     for raw_num in registry.get("sequence", []):
         num = str(raw_num)
@@ -541,22 +639,62 @@ def refresh_usage(timeout: float = 45.0) -> bool:
         active = identity == (email, info.get("organizationUuid") or "") or (
             (info.get("kind") or "oauth") == "api_key" and num == active_number
         )
-        work.append((num, email, active))
+        work.append((num, email, active, num in shared))
     if not work:
         return False
-    previous = (read_json(usage_cache_path(), {}) or {}).get("data") or {}
+    # A shared copy near expiry means this machine missed the hub's refresh
+    # (asleep, agent behind): pull once instead of refreshing it here.
+    if any(is_shared and _shared_copy_stale(num, email, active) for num, email, active, is_shared in work):
+        pull_from_hub()
+    previous = _read_usage_cache().get("data") or {}
     results: dict[str, dict | str | None] = {}
     with ThreadPoolExecutor(max_workers=min(8, len(work))) as pool:
         futures = [pool.submit(_fetch_one, *item) for item in work]
         for future in as_completed(futures, timeout=timeout):
             num, usage = future.result()
-            # A rate limit or transient network/API failure must not erase the
-            # last verified usage or masquerade as a broken login.
-            if usage == "usage temporarily unavailable" and isinstance(previous.get(num), dict):
-                usage = previous[num]
-            results[num] = usage
-    atomic_write_json(usage_cache_path(), {"timestamp": time.time(), "data": results})
+            results[num] = _keep_last_good(usage, previous.get(num))
+    with file_lock(_usage_lock_path()):
+        atomic_write_json(usage_cache_path(), {"timestamp": time.time(), "data": results})
     return bool(results)
+
+
+def _usage_lock_path() -> Path:
+    return backup_dir() / "cache" / ".ccc-usage.lock"
+
+
+def _keep_last_good(usage, previous):
+    # A rate limit or transient network/API failure must not erase the last
+    # verified usage or masquerade as a broken login.
+    if usage == "usage temporarily unavailable" and isinstance(previous, dict):
+        return previous
+    return usage
+
+
+def refresh_usage_for(nums) -> dict[str, dict | str | None]:
+    """Fetch usage for these slots only and merge it into the cache.
+
+    For the sync agent after a pull: a usage call with the stored access
+    token, never a token refresh (these are shared logins).
+    """
+    registry = _registry()
+    identity = _active_identity()
+    results: dict[str, dict | str | None] = {}
+    for num in dict.fromkeys(str(n) for n in nums):
+        info = registry.get("accounts", {}).get(num)
+        if not info or (info.get("kind") or "oauth") != "oauth":
+            continue
+        email = info.get("email", "unknown")
+        active = identity == (email, info.get("organizationUuid") or "")
+        results[num] = _fetch_one(num, email, active, shared=True)[1]
+    if results:
+        with file_lock(_usage_lock_path()):
+            cached = _read_usage_cache()
+            data = dict(cached.get("data") or {})
+            for num, usage in results.items():
+                data[num] = _keep_last_good(usage, data.get(num))
+            atomic_write_json(usage_cache_path(), {
+                "timestamp": cached.get("timestamp") or time.time(), "data": data})
+    return results
 
 
 def needs_login(acct: ClaudeAccount) -> bool:
@@ -565,7 +703,14 @@ def needs_login(acct: ClaudeAccount) -> bool:
     # For the account-switcher workflow, a Claude account is only considered
     # ready once its locally stored credential can produce usage. The explicit
     # save action captures a fresh matching login and immediately refreshes.
+    if acct.shared and acct.usage in (None, USAGE_PENDING, WAITING_FOR_HUB):
+        return False  # healthy shared login: usage not measured yet / hub refreshing
     return acct.usage is None or acct.usage in ("no credentials", "authentication expired")
+
+
+def usage_pending(acct: ClaudeAccount) -> bool:
+    """A shared login with no usage yet (just synced, or waiting for the hub)."""
+    return acct.shared and acct.usage in (None, USAGE_PENDING, WAITING_FOR_HUB)
 
 
 def load_accounts(refresh: bool = True) -> tuple[list[ClaudeAccount], float | None]:
@@ -576,10 +721,11 @@ def load_accounts(refresh: bool = True) -> tuple[list[ClaudeAccount], float | No
         except (OSError, TimeoutError):
             pass
     registry = _registry()
-    cached = read_json(usage_cache_path(), {}) or {}
+    cached = _read_usage_cache()
     usage = cached.get("data") or {}
     identity = _active_identity()
     active_number = str(registry.get("activeAccountNumber") or "")
+    shared = _shared_nums(registry)
     accounts = []
     for raw_num in registry.get("sequence", []):
         num = str(raw_num)
@@ -591,7 +737,8 @@ def load_accounts(refresh: bool = True) -> tuple[list[ClaudeAccount], float | No
             num=num, email=email, org_name=info.get("organizationName") or "",
             org_uuid=org_uuid,
             active=(identity == (email, org_uuid)) or (kind == "api_key" and num == active_number),
-            usage=usage.get(num), kind=kind, disabled=bool(info.get("disabled")),
+            usage=usage.get(num) if (usage.get(num) is not None or num not in shared) else USAGE_PENDING,
+            kind=kind, disabled=bool(info.get("disabled")), shared=num in shared,
         ))
     return accounts, cached.get("timestamp")
 

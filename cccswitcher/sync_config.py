@@ -49,6 +49,32 @@ def enabled(config: dict | None = None) -> bool:
     return bool(config.get("hub_url") and config.get("secret"))
 
 
+def state_path() -> Path:
+    """The agent's persisted state (sync-state.json, next to sync.json)."""
+    return config_path().with_name("sync-state.json")
+
+
+def hub_shared_keys(config: dict | None = None) -> tuple[set[str], bool] | None:
+    """Account keys the hub shares (and so refreshes), from the agent's state.
+
+    Returns None when sync is not set up, else (keys, authoritative). The
+    agent records the hub's shared Claude keys on every round ("hub_shared",
+    0.21.1): authoritative. A 0.21.0 state (or none yet) lacks that list; its
+    per-account entries (pulled or pushed logins) stand in for it, and
+    callers should also treat slots the agent created as shared. Callers
+    must never refresh these logins locally: the hub is the one refresher.
+    """
+    if not enabled(config):
+        return None
+    state = read_json(state_path(), {}) or {}
+    if not isinstance(state, dict):
+        return set(), False
+    keys = state.get("hub_shared")
+    if isinstance(keys, list):
+        return {str(k) for k in keys}, True
+    return {str(k) for k in (state.get("accounts") or {})}, False
+
+
 def new_secret() -> str:
     return secrets.token_urlsafe(32)
 

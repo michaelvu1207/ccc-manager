@@ -46,6 +46,8 @@ class WaitUnsupported(HubError):
 
 
 REPORT_EVERY_S = 3600
+WAKE_TICK_S = 10.0   # how often the service loop looks at the wall clock
+WAKE_GAP_S = 30.0    # a wall-clock jump larger than this counts as a wake
 
 
 class HubClient:
@@ -119,7 +121,7 @@ class HubClient:
 
 
 def state_path():
-    return sync_config.config_path().with_name("sync-state.json")
+    return sync_config.state_path()
 
 
 def load_state() -> dict:
@@ -171,18 +173,25 @@ def local_fingerprint() -> str:
 
 
 def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEOUT_S,
-             push: bool = True, report: str = "auto") -> dict:
+             push: bool = True, report: str = "auto", fetch_usage: bool = True) -> dict:
     """One pull(/push/report) round. Returns a summary (no secrets).
 
     report: "always", "auto" (only if generations/errors changed or hourly),
-    or "never".
+    or "never". fetch_usage: after the pull, read usage for the logins it
+    created or updated (usage API only, with the pulled access token).
     """
     summary = {"pulled": [], "created": [], "pushed": [], "active_updated": False,
-               "skipped_busy": False, "errors": [], "hub_version": None, "reported": False}
+               "skipped_busy": False, "errors": [], "hub_version": None, "reported": False,
+               "usage_updated": []}
     state = load_state()
     hub_accounts = client.credentials()
     summary["hub_version"] = getattr(client, "last_hub_version", None)
     by_key = {a["key"]: a for a in hub_accounts}
+    # The logins the hub refreshes. CCC's local engine never refreshes these
+    # (sync_config.hub_shared_keys); save it before anything else.
+    state["hub_shared"] = sorted(k for k, a in by_key.items()
+                                 if a.get("provider", "claude") == "claude" and a.get("shared", True))
+    save_state(state)
     slots = _local_slots()
     active_key = _active_key()
 
@@ -222,6 +231,17 @@ def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEO
         except (OSError, ValueError) as exc:
             summary["errors"].append(f"{remote.get('email', key)}: {sync_config.redact(exc)}")
 
+    # ---- USAGE for new/updated copies (no refresh; shared logins) ----
+    changed = list(dict.fromkeys(summary["created"] + summary["pulled"]
+                                 + ([active_key] if summary["active_updated"] else [])))
+    if fetch_usage and changed:
+        nums = {slots[k]["num"]: k for k in changed if k in slots}
+        try:
+            fetched = claude.refresh_usage_for(list(nums))
+            summary["usage_updated"] = [nums[n] for n, u in fetched.items() if isinstance(u, dict)]
+        except (OSError, ValueError) as exc:
+            summary["errors"].append(f"usage: {sync_config.redact(exc)}")
+
     # ---- PUSH ----
     for key, slot in (_local_slots().items() if push else []):
         remote = by_key.get(key)
@@ -244,6 +264,7 @@ def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEO
             })
             if answer.get("adopted"):
                 summary["pushed"].append(key)
+                state["hub_shared"] = sorted(set(state["hub_shared"]) | {key})  # hub refreshes it now
                 state["accounts"][key] = {"generation": answer.get("generation", 0), "synced_at": time.time()}
         except HubError as exc:
             summary["errors"].append(str(exc))
@@ -269,8 +290,11 @@ def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEO
 
 def run_events(client: HubClient, local_interval: float = 120.0, full_interval: float = 3600.0,
                wait_timeout: float = 55.0, stop: threading.Event | None = None,
-               lock_timeout: float = claude_locks.DEFAULT_TIMEOUT_S) -> None:
-    """The 0.21 service loop (see module docstring). Returns when `stop` is set."""
+               lock_timeout: float = claude_locks.DEFAULT_TIMEOUT_S, clock=time.time) -> None:
+    """The 0.21 service loop (see module docstring). Returns when `stop` is set.
+
+    `clock` is the wall clock (tests jump it to simulate sleep/wake).
+    """
     stop = stop or threading.Event()
     rounds = threading.Lock()
     shared = {"since": 0, "fingerprint": None, "last_full": 0.0}
@@ -292,7 +316,7 @@ def run_events(client: HubClient, local_interval: float = 120.0, full_interval: 
                 pass
 
     def full() -> None:
-        shared["last_full"] = time.time()
+        shared["last_full"] = clock()
         do_round(push=True)
 
     def long_poll() -> None:
@@ -318,17 +342,25 @@ def run_events(client: HubClient, local_interval: float = 120.0, full_interval: 
                 if shared.pop("resync", False):
                     full()
 
-    full()  # at start
+    full()  # at start: pull (then push) before anything else
     poller = threading.Thread(target=long_poll, daemon=True)
     poller.start()
-    last_tick = time.time()
-    while not stop.wait(local_interval):
-        now = time.time()
-        woke = now - last_tick > 2 * local_interval + 30  # sleep/wake or a long stall
+    # A short tick on the wall clock sees a wake within seconds (the wait
+    # itself runs on a clock that stops during sleep), so the first thing
+    # after wake is a pull, not up to `local_interval` later.
+    tick = max(0.05, min(local_interval, WAKE_TICK_S))
+    last_tick = last_local = clock()
+    while not stop.wait(tick):
+        now = clock()
+        woke = now - last_tick > tick + WAKE_GAP_S  # sleep/wake or a long stall
         last_tick = now
         if woke or now - shared["last_full"] >= full_interval:
             full()
+            last_local = clock()
             continue
+        if now - last_local < local_interval:
+            continue
+        last_local = now
         try:
             changed = local_fingerprint() != shared["fingerprint"]
         except (OSError, ValueError):

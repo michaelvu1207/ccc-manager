@@ -140,3 +140,45 @@ def seed_login(email: str, org: str, credential: dict, *, active: bool, slot: bo
             claude.add_current_account()
         else:
             claude.create_slot(email, org, identity["organizationName"], identity, json.dumps(credential))
+
+
+class FakeUsage:
+    """Anthropic's OAuth usage endpoint: counts calls, 401 for revoked tokens."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.calls: list[str] = []            # access tokens seen (test-only fakes)
+        self.revoked: set[str] = set()
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                return
+
+            def do_GET(self):
+                token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+                with outer.lock:
+                    outer.calls.append(token)
+                    ok = token.startswith("at-") and token not in outer.revoked
+                answer = {"five_hour": {"utilization": 12.0, "resets_at": None},
+                          "seven_day": {"utilization": 34.0, "resets_at": None}} if ok else {"error": "unauthorized"}
+                data = json.dumps(answer).encode()
+                self.send_response(200 if ok else 401)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/api/oauth/usage"
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def write_sync_config(hub_url: str, secret: str, machine: str) -> None:
+    """sync.json on the current fake machine (sync set up, agent role)."""
+    from cccswitcher import sync_config
+
+    sync_config.save({"hub_url": hub_url, "secret": secret, "machine": machine})
