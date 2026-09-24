@@ -7,10 +7,10 @@ records, for every enabled machine, whether the account is the active login
 there, stored, stored but needing a login, absent, or unknown because the
 machine is offline.
 
-It never moves credentials: "assigning" an account to a machine means
-switching to that machine's own stored login or starting a fresh /login
-there (refresh tokens rotate, so a copied credential would break the other
-copy).
+This module never moves credentials: "assigning" an account to a machine
+means switching to that machine's own stored login or starting a fresh
+/login there. Only shared-login sync (sync_hub / sync_agent) distributes
+logins, with a single refresher, because refresh tokens rotate.
 """
 
 from __future__ import annotations

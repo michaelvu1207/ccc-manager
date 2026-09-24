@@ -200,8 +200,9 @@ ccc assign alice@example.com --machine path-pc   # switch if stored there, else 
 ccc disable alice@example.com --everywhere       # every machine that stores it
 ```
 
-**Credentials never move between machines.** Refresh tokens rotate, so a
-copied credential would break the other copy. "Giving" an account to a machine
+**Without sync, credentials never move between machines.** Refresh tokens
+rotate, so an unmanaged copy would break the other copy (shared logins below
+solve this with a single refresher). "Giving" an account to a machine
 always means switching to that machine's own stored login, or signing in on
 that machine with a fresh `/login`. A disabled state is per machine; an
 account shows "(disabled)" when every machine that stores it has it disabled,
@@ -209,6 +210,100 @@ and "(disabled on N)" otherwise.
 
 In the TUI, ←/→ pick a machine chip on the selected account, Enter acts on
 it, and `m` switches to the machine-grouped view.
+
+## Shared logins (sync)
+
+Log in once on any of your machines and CCC makes that login available on all
+of them. Only Claude logins are shared for now (Codex has no single-refresher
+support yet).
+
+**Why one refresher.** Claude (and ChatGPT) OAuth rotate the refresh token on
+every refresh. If two machines refreshed copies of one login, the second would
+use a dead token — and reusing an old refresh token can revoke the whole
+login. So exactly one process, the **hub**, refreshes shared logins: early
+(when less than 2 h is left), under a lock, bumping a per-account
+*generation*. Every machine runs an **agent** that never refreshes; every
+60 s it:
+
+1. **pulls** the newest credential for each shared login into this machine's
+   cswap/CCC account slot (creating the slot if needed, in the files cswap
+   0.26 reads), and, if it is the active Claude Code login here, replaces the
+   live credential while holding Claude Code's own refresh locks
+   (`~/.claude/.oauth_refresh.lock`, `~/.claude.lock`) — it skips the round if
+   Claude Code is refreshing right now;
+2. **pushes** logins the hub does not have (a fresh `/login` here) and copies
+   newer than the hub's (Claude Code refreshed here anyway). The hub adopts a
+   copy only if it is strictly newer (later `expiresAt`, different token).
+
+Machines get the full credential, including the refresh token, so Claude Code
+keeps working if the hub is down; the hub refreshes early, so machines never
+need to. Set `"withhold_refresh_token": true` in the hub's sync.json to give
+other machines access tokens only.
+
+Shared by default: every Claude account, once sync is set up. Stop sharing one
+with `ccc sync share <email> --off` (or the account's `…` menu in the app);
+the hub then drops its copy.
+
+### Protocol
+
+JSON over HTTP; TLS comes from `tailscale serve`. Every call except health
+needs `Authorization: Bearer <secret>`; a hub bound to a non-loopback address
+also requires a Tailscale peer (100.64.0.0/10, fd7a:115c:a1e0::/48).
+
+| Call | Body | Answer |
+|---|---|---|
+| `GET /v1/health` | — | `{ok, service, version}` |
+| `GET /v1/credentials` | header `X-CCC-Machine` | `{accounts: [{key, provider, email, org_uuid, org_name, oauth_account, shared, generation, expires_at, credential?}]}` |
+| `POST /v1/credentials` | `{machine, key, provider, email, org_uuid, org_name, oauth_account, credential}` | `{adopted, generation, reason}` |
+| `POST /v1/share` | `{key, shared}` | `{key, shared}` |
+| `POST /v1/report` | `{machine, version, generations, errors}` | `{ok}` |
+| `GET /v1/status` | — | `{hub, accounts (no tokens), machines}` |
+
+`key` is `claude|<email>|<organization uuid>`; `credential` is the exact JSON
+Claude Code stores (`{"claudeAiOauth": {...}}`).
+
+### Files
+
+- `~/.config/ccc/sync.json` (0600): hub URL, shared secret, this machine's
+  name; on the hub also bind address, port, `withhold_refresh_token`.
+- `~/.config/ccc/sync-state.json` (0600): this agent's last sync and generations.
+- Hub store: `~/.local/share/ccc/hub/store.json` (0600).
+
+Nothing logs tokens; errors are redacted. The secret is only in sync.json and
+the Authorization header; `ccc sync distribute` and `ccc sync join --from`
+move it between your machines over SSH stdin, never on a command line.
+
+### Setup
+
+Pick one always-on machine as the hub. With `hub` = its SSH alias and
+`https://hub.tailXXXX.ts.net` = its Tailscale HTTPS name:
+
+```sh
+# 1. CCC on every machine (remotes need only uv)
+uv tool install --force --reinstall /path/to/ccc-manager     # this Mac
+ccc machines install hub                                      # builds a wheel, installs over ssh
+ccc machines install other-box
+
+# 2. hub: config, service, HTTPS on the tailnet
+ssh hub 'PATH=$HOME/.local/bin:$PATH ccc sync init --hub-url https://hub.tailXXXX.ts.net --machine hub'
+ssh hub 'PATH=$HOME/.local/bin:$PATH ccc sync install-hub'
+ssh hub 'tailscale serve --bg --https=443 http://127.0.0.1:8765'
+
+# 3. agents (this Mac + every machine, the hub included)
+ccc sync join --hub-url https://hub.tailXXXX.ts.net --machine this-mac --from hub
+ccc sync install-agent
+ccc sync distribute --machine other-box
+ssh other-box 'PATH=$HOME/.local/bin:$PATH ccc sync install-agent'
+ssh hub 'PATH=$HOME/.local/bin:$PATH ccc sync install-agent'
+
+# 4. check
+ccc sync once && ccc sync status
+```
+
+Services are a LaunchAgent on macOS (`~/Library/LaunchAgents/dev.maikyon.ccc.sync-*.plist`,
+which can read the login keychain) and a `systemd --user` unit on Linux
+(`ccc-sync-*.service`; run `loginctl enable-linger` to keep it running
+without a login). Remove them with `ccc sync uninstall`.
 
 ## Machines
 

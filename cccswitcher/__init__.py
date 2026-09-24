@@ -1,3 +1,3 @@
 """CCC Manager — combined Claude + Codex account and usage overview."""
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
