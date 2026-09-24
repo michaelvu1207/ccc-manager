@@ -130,6 +130,11 @@ def build(machines: list[dict]) -> dict:
             "active_on": [mid for mid, acct in records.items() if acct.get("active")],
             "stored_on": stored_on,
             "machines": per_machine,
+            # This Mac's 0.17 extras (Codex consumable resets), when present.
+            "consumable_resets": next((r.get("consumable_resets") for r in records.values()
+                                       if r.get("consumable_resets") is not None), None),
+            "consumable_reset_credits": next((r.get("consumable_reset_credits") for r in records.values()
+                                              if r.get("consumable_reset_credits")), []),
         })
     accounts.sort(key=_sort_key)
 
