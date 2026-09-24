@@ -222,8 +222,13 @@ every refresh. If two machines refreshed copies of one login, the second would
 use a dead token — and reusing an old refresh token can revoke the whole
 login. So exactly one process, the **hub**, refreshes shared logins: early
 (when less than 2 h is left), under a lock, bumping a per-account
-*generation*. Every machine runs an **agent** that never refreshes; every
-60 s it:
+*generation*. Every machine runs an **agent** that never refreshes. It is
+event-driven: it long-polls the hub and pulls only when the hub's version
+moves (so a change reaches every machine within seconds), checks this
+machine's logins every 2 minutes without network and uploads only on change,
+and runs a full round at start, after wake, and hourly as a safety net. It
+reports its state to the hub only when something changed (or hourly). Against
+a 0.20 hub it falls back to a round every 60 s. Each round:
 
 1. **pulls** the newest credential for each shared login into this machine's
    cswap/CCC account slot (creating the slot if needed, in the files cswap
@@ -244,6 +249,23 @@ Shared by default: every Claude account, once sync is set up. Stop sharing one
 with `ccc sync share <email> --off` (or the account's `…` menu in the app);
 the hub then drops its copy.
 
+### Logging in: one button, on this Mac
+
+"Log in with new account" at the top of the app's Accounts tab (or
+`ccc sync login [--email you@example.com]`) opens Terminal on this Mac and
+runs Claude Code's own login (`claude auth login`) in a private, temporary
+profile (`~/.cache/ccc/login-<random>`, 0700), so this Mac's current Claude
+Code login is untouched. CCC then reads the new login (macOS: the Keychain
+item Claude Code keys by that profile directory; Linux: its
+`.credentials.json`), uploads it to the hub as a shared login — replacing an
+older copy, which is also how a dead account is re-logged (the orange "!"
+chip uses the same flow) — deletes the temporary profile and its Keychain
+item, and shows each machine as it picks the login up.
+
+Why on the app's own machine: the macOS login Keychain is locked in SSH
+sessions, and Claude Code's browser sign-in returns to `localhost` on the
+machine that started it. A local login just works; the hub distributes it.
+
 ### Protocol
 
 JSON over HTTP; TLS comes from `tailscale serve`. Every call except health
@@ -253,13 +275,16 @@ also requires a Tailscale peer (100.64.0.0/10, fd7a:115c:a1e0::/48).
 | Call | Body | Answer |
 |---|---|---|
 | `GET /v1/health` | — | `{ok, service, version}` |
-| `GET /v1/credentials` | header `X-CCC-Machine` | `{accounts: [{key, provider, email, org_uuid, org_name, oauth_account, shared, generation, expires_at, credential?}]}` |
-| `POST /v1/credentials` | `{machine, key, provider, email, org_uuid, org_name, oauth_account, credential}` | `{adopted, generation, reason}` |
+| `GET /v1/credentials/wait?since=V&timeout=S` (0.21) | — | `200 {hub_version}` as soon as the hub's version is newer than `V`, else `304` after `S` (≤ 55) seconds |
+| `GET /v1/credentials` | header `X-CCC-Machine` | `{hub_version, accounts: [{key, provider, email, org_uuid, org_name, oauth_account, shared, generation, expires_at, credential?}]}` |
+| `POST /v1/credentials` | `{machine, key, provider, email, org_uuid, org_name, oauth_account, credential, replace?}` | `{adopted, generation, reason}` (`replace`: a fresh login replaces the hub copy) |
 | `POST /v1/share` | `{key, shared}` | `{key, shared}` |
 | `POST /v1/report` | `{machine, version, generations, errors}` | `{ok}` |
 | `GET /v1/status` | — | `{hub, accounts (no tokens), machines}` |
 
-`key` is `claude|<email>|<organization uuid>`; `credential` is the exact JSON
+The hub's `hub_version` goes up on every adopt, refresh, and share change.
+0.21 only adds fields and one endpoint, so a 0.21 hub keeps serving 0.20
+agents unchanged. `key` is `claude|<email>|<organization uuid>`; `credential` is the exact JSON
 Claude Code stores (`{"claudeAiOauth": {...}}`).
 
 ### Files
@@ -281,7 +306,9 @@ Pick one always-on machine as the hub. With `hub` = its SSH alias and
 ```sh
 # 1. CCC on every machine (remotes need only uv)
 uv tool install --force --reinstall /path/to/ccc-manager     # this Mac
-ccc machines install hub                                      # builds a wheel, installs over ssh
+ccc machines install hub --source /path/to/ccc-manager       # builds a wheel, installs over ssh
+                                                              # (or --wheel dist/ccc_manager-*.whl;
+                                                              #  CCC_SOURCE_DIR=... also works)
 ccc machines install other-box
 
 # 2. hub: config, service, HTTPS on the tailnet
@@ -303,7 +330,8 @@ ccc sync once && ccc sync status
 Services are a LaunchAgent on macOS (`~/Library/LaunchAgents/dev.maikyon.ccc.sync-*.plist`,
 which can read the login keychain) and a `systemd --user` unit on Linux
 (`ccc-sync-*.service`; run `loginctl enable-linger` to keep it running
-without a login). Remove them with `ccc sync uninstall`.
+without a login). Over plain ssh, `install-agent` fills in
+`XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS` for `systemctl --user` itself. Remove them with `ccc sync uninstall`.
 
 ## Machines
 
