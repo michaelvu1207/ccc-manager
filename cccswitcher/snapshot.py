@@ -202,6 +202,7 @@ def machine_payload(state: remote.MachineState) -> dict:
         "id": m.id,
         "alias": m.alias,
         "display_name": m.name,
+        "short": m.short,
         "local": m.local,
         "engine": m.resolved_engine,
         "platform": state.platform,

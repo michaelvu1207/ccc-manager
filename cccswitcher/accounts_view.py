@@ -15,6 +15,8 @@ logins, with a single refresher, because refresh tokens rotate.
 
 from __future__ import annotations
 
+import platform
+import re
 import time
 
 # Per-machine states, as shown on the app's machine chips. PENDING: a healthy
@@ -23,15 +25,43 @@ ACTIVE, STORED, NEEDS_LOGIN, ABSENT, OFFLINE = "active", "stored", "needs_login"
 PENDING = "pending"
 
 
-def short_name(name: str) -> str:
-    """Compact chip label: the name, or its first segment when long."""
-    if len(name) <= 16:
-        return name
-    for sep in (" ", ".", "_", "-"):
-        head = name.split(sep)[0]
-        if 2 <= len(head) < len(name):
-            return head[:14]
-    return name[:13] + "…"
+SHORT_MAX = 8
+_SEPARATORS = re.compile(r"[-_. ]+")
+
+
+def short_name(name: str, others: list[str] = ()) -> str:
+    """Compact column label for a machine name.
+
+    A prefix shared with another machine is dropped ("simforge-a100" and
+    "simforge-laptop" -> "a100", "laptop"); otherwise the first segment is
+    kept ("path-brower" -> "path"). At most SHORT_MAX characters.
+    """
+    parts = [p for p in _SEPARATORS.split(name.strip()) if p]
+    if len(parts) < 2:
+        return name.strip()[:SHORT_MAX] or "?"
+    head = parts[0].lower()
+    shared = any(_SEPARATORS.split(o.strip())[0].lower() == head for o in others if o != name)
+    return ("-".join(parts[1:]) if shared else parts[0])[:SHORT_MAX]
+
+
+def short_names(shown: list[dict]) -> dict[str, str]:
+    """Column labels: the user's own, else "Mac" for this Mac, else derived; unique."""
+    names = [m.get("display_name") or m["id"] for m in shown if not m.get("local")]
+    out: dict[str, str] = {}
+    for m in shown:
+        name = m.get("display_name") or m["id"]
+        if m.get("short"):
+            label = str(m["short"])
+        elif m.get("local"):
+            label = "Mac" if (m.get("platform") or platform.system()) == "Darwin" else "here"
+        else:
+            label = short_name(name, names)
+        base, n = label, 2
+        while label in out.values():
+            label = f"{base[:SHORT_MAX - 1]}{n}"
+            n += 1
+        out[m["id"]] = label
+    return out
 
 
 def _identity(provider: str, acct: dict) -> tuple[str, str, str]:
@@ -178,6 +208,7 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
                                               if r.get("consumable_reset_credits")), []),
         })
     accounts.sort(key=_sort_key)
+    shorts = short_names(shown)
 
     return {
         "generated_at": time.time(),
@@ -185,7 +216,7 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
             {
                 "id": m["id"],
                 "name": m.get("display_name") or m["id"],
-                "short_name": "this Mac" if m.get("local") else short_name(m.get("display_name") or m["id"]),
+                "short_name": shorts[m["id"]],
                 "platform": m.get("platform") or "",
                 "local": bool(m.get("local")),
                 "online": bool(m.get("online")),

@@ -1,8 +1,9 @@
 """Interactive curses TUI — the default `ccc` view.
 
-Default view: one row per account (Claude, then Codex) with its usage and a
-line of machine chips (● active, ○ stored, ! needs login, + not on that
-machine, × offline). ↑/↓ pick an account, ←/→ pick a machine chip, Enter acts
+Default view: an account matrix — one column per machine, one line per
+account (Claude, then Codex) with a marker under each column (● active,
+○ stored, ◌ pending, ! needs login, + not on that machine, × offline) and
+its usage on the line below. ↑/↓ pick an account, ←/→ pick a machine chip, Enter acts
 on that chip (never on the row as a whole): switch that machine to its stored
 login, re-login, or start a fresh login there. `l` re-logs in, `d` toggles disable on that machine, `m`
 switches to the machine-grouped view, `r` refreshes, `q` quits. Credentials
@@ -468,34 +469,53 @@ class App:
         return segs
 
     def _draw_account_view(self, stdscr, top, left, width, height):
-        """Account-centric panel: usage line + a line of machine chips."""
+        """Account matrix: one column per machine; per account a line of
+        markers under the columns, then its usage."""
         self._box(stdscr, top, left, width, height, "Accounts · all machines")
         inner, right = left + 2, left + width - 2
         rows = self.account_rows()
-        label_w = min(max((len(a["label"]) for a in rows), default=10), max(12, right - inner - 70))
         y, bottom = top + 1, top + height - 1
         if not rows:
             self._put(stdscr, y, inner, "no accounts yet", theme.attr("muted"))
             return
         ms = self.view["machines"]
+        widths = [max(3, len(m["short_name"])) + 2 for m in ms]
+        label_w = max(12, min(max(len(a["label"]) for a in rows), right - inner - 3 - sum(widths)))
         last = None
         for idx, a in enumerate(rows):
             if y >= bottom:
                 break
-            if a["provider"] != last:
-                self._put(stdscr, y, inner, a["provider"].upper(), theme.attr("muted", bold=True))
+            if a["provider"] != last:  # section title + the machine column headers
+                header = [(f"{a['provider'].upper():<{label_w + 3}}", theme.attr("muted", bold=True))]
+                header += [(m["short_name"].center(w), theme.attr("label")) for m, w in zip(ms, widths)]
+                self._segs_clip(stdscr, y, inner, right, header)
                 y += 1
                 last = a["provider"]
+                if y >= bottom:
+                    break
             selected = idx == self.sel
             self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ", theme.attr("accent", bold=True))
             prole = "claude" if a["provider"] == "claude" else "codex"
             name_attr = theme.attr(prole, bold=True) if selected else theme.attr(
                 "muted" if a["disabled"] else "text", bold=bool(a["active_on"]))
             label = a["label"] if len(a["label"]) <= label_w else a["label"][: label_w - 1] + "…"
-            # No leading "active" marker: the chips below say where it is active.
-            segs = [(f"{label:<{label_w}}  ", name_attr)]
+            cells = [(f"{label:<{label_w}}  ", name_attr)]
+            for ci, (m, w) in enumerate(zip(ms, widths)):
+                entry = a["machines"].get(m["id"], {"state": "offline"})
+                state = entry["state"]
+                role = {"active": "good", "stored": "text", "pending": "text",
+                        "needs_login": "danger"}.get(state, "muted")
+                attr = theme.attr(role, bold=state == "active")
+                if selected and ci == min(self.chip, len(ms) - 1):
+                    attr |= curses.A_REVERSE
+                cells.append(((CHIPS[state] + ("⊘" if entry.get("disabled") else "")).center(w), attr))
             if a["disabled"]:
-                segs.append(("disabled  ", theme.attr("muted")))
+                cells.append(("  disabled", theme.attr("muted")))
+            self._segs_clip(stdscr, y, inner + 1, right, cells)
+            y += 1
+            if y >= bottom:
+                break
+            segs = []
             if a["needs_login"]:
                 segs += [(theme.WARN + " ", theme.attr("danger", bold=True)), ("needs login", theme.attr("danger"))]
             else:
@@ -510,22 +530,7 @@ class App:
                     segs.append(("(last known)", theme.attr("muted")))
                 elif not a["windows"]:
                     segs.append((a["status_message"] or "usage unavailable", theme.attr("muted")))
-            self._segs_clip(stdscr, y, inner + 1, right, segs)
-            y += 1
-            if y >= bottom:
-                break
-            chips = []
-            for ci, m in enumerate(ms):
-                entry = a["machines"].get(m["id"], {"state": "offline"})
-                state = entry["state"]
-                role = {"active": "good", "stored": "text", "pending": "text",
-                        "needs_login": "danger"}.get(state, "muted")
-                text = f"[{CHIPS[state]} {m['short_name']}{' ⊘' if entry.get('disabled') else ''}]"
-                attr = theme.attr(role, bold=state == "active")
-                if selected and ci == min(self.chip, len(ms) - 1):
-                    attr |= curses.A_REVERSE
-                chips += [(text, attr), (" ", 0)]
-            self._segs_clip(stdscr, y, inner + 1, right, chips)
+            self._segs_clip(stdscr, y, inner + 3, right, segs)
             y += 1
 
     def _draw_accounts(self, stdscr, top, left, width, height):

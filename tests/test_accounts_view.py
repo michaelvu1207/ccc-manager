@@ -1,5 +1,6 @@
 import json
 import unittest
+import unittest.mock
 
 from cccswitcher import accounts_view, cli, machines, remote, snapshot
 
@@ -40,7 +41,7 @@ class Aggregation(unittest.TestCase):
         b = next(x for x in view["accounts"] if x["email"] == "b@x.com")
         self.assertEqual(b["machines"]["local"]["state"], "absent")
         self.assertEqual(view["accounts"][0]["email"].lower(), "a@x.com")  # active first
-        self.assertEqual(view["machines"][0]["short_name"], "this Mac")
+        self.assertEqual(view["machines"][0]["short_name"], "here")  # fixtures say Linux
 
     def test_live_beats_newer_stale_and_org_split(self):
         view = accounts_view.build([
@@ -129,6 +130,38 @@ class AssignWithFakes(unittest.TestCase):
             self.assertEqual(cli.main(["accounts", "--no-refresh", "--json"]), 0)
         view = json.loads(buf.getvalue())
         self.assertIn("accounts", view)
+
+
+class ShortNames(unittest.TestCase):
+    def test_derived_column_labels(self):
+        shown = [dict(machine("local", local=True), platform="Darwin", display_name="Michael's MacBook Pro"),
+                 dict(machine("box"), display_name="path-brower"),
+                 dict(machine("gpu"), display_name="simforge-a100"),
+                 dict(machine("lap"), display_name="simforge-laptop"),
+                 dict(machine("x"), display_name="gpu", short="big-gpu")]
+        self.assertEqual(accounts_view.short_names(shown),
+                         {"local": "Mac", "box": "path", "gpu": "a100", "lap": "laptop", "x": "big-gpu"})
+        view = accounts_view.build(shown)
+        self.assertEqual([m["short_name"] for m in view["machines"]], ["Mac", "path", "a100", "laptop", "big-gpu"])
+
+    def test_labels_stay_unique_and_short(self):
+        shown = [dict(machine("a"), display_name="path-pc"), dict(machine("b"), display_name="path-brower"),
+                 dict(machine("c"), display_name="averyveryverylongname")]
+        labels = accounts_view.short_names(shown)
+        self.assertEqual(labels, {"a": "pc", "b": "brower", "c": "averyver"})
+        self.assertEqual(len(set(labels.values())), 3)
+
+    def test_user_short_name_is_saved(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.dict(os.environ, {"CCC_MACHINES_FILE": tmp + "/m.json"}):
+            fleet = [machines.Machine(id="local", name="Mac"), machines.Machine(id="b", name="b", alias="b")]
+            machines.set_short(fleet, "b", " a100 ")
+            machines.save(fleet)
+            self.assertEqual(next(m for m in machines.load() if m.id == "b").short, "a100")
+            with self.assertRaises(machines.ConfigError):
+                machines.set_short(fleet, "b", "x" * 11)
 
 
 if __name__ == "__main__":

@@ -358,11 +358,10 @@ def cmd_enable(args: argparse.Namespace) -> int:
 CHIP = {"active": "●", "stored": "○", "pending": "◌", "needs_login": "!", "absent": "+", "offline": "×"}
 
 
-def _chip_text(machine: dict, entry: dict) -> str:
+def _cell(entry: dict, width: int) -> str:
+    """One account's marker under a machine column, padded then colored."""
     state = entry["state"]
-    text = f"{CHIP[state]} {machine['short_name']}"
-    if entry.get("disabled"):
-        text += " (disabled)"
+    text = (CHIP[state] + ("⊘" if entry.get("disabled") else "")).center(width)
     if state == "active":
         return cyan(text)
     if state == "needs_login":
@@ -371,31 +370,33 @@ def _chip_text(machine: dict, entry: dict) -> str:
 
 
 def cmd_accounts(args: argparse.Namespace) -> int:
-    """One row per account, with its state on every machine."""
+    """One line per account with a marker per machine column; usage below."""
     view = _view(refresh=not args.no_refresh)
     if args.json:
         print(json.dumps(view))
         return 0
     machine_by_id = {m["id"]: m for m in view["machines"]}
+    columns = [(m["id"], max(3, len(m["short_name"])) + 2) for m in view["machines"]]
+    width = max([len(a["label"]) for a in view["accounts"]] + [7])
     for provider in ("claude", "codex"):
         rows = [a for a in view["accounts"] if a["provider"] == provider]
         if not rows:
             continue
-        print(bold(provider.capitalize()))
-        width = max(len(a["label"]) for a in rows)
+        header = "".join(machine_by_id[mid]["short_name"].center(w) for mid, w in columns)
+        print(bold(f"{provider.capitalize():<{width + 2}}") + dim(header))
         for a in rows:
+            cells = "".join(_cell(a["machines"].get(mid, {"state": "offline"}), w) for mid, w in columns)
             flag = dim(" (disabled)") if a["disabled"] else ""
+            print(f"  {a['label']:<{width}}{cells}{flag}")
             usage = "  ".join(_remote_cells(a)) if not a["needs_login"] else dim("needs login everywhere")
             source = ""
-            if a["usage_from"] and a["usage_at"] and not a["needs_login"]:
+            if a["usage_from"] and a["usage_at"] and a["usage_stale"] and not a["needs_login"]:
                 src = machine_by_id.get(a["usage_from"], {}).get("short_name", a["usage_from"])
                 source = dim(f"  as of {fmt_age(a['usage_at'])} ago from {src}")
-            print(f"  {a['label']:<{width}}{flag}  {usage}{source}")
-            chips = [_chip_text(machine_by_id[mid], entry) for mid, entry in a["machines"].items()]
-            print("    " + "   ".join(chips))
+            print(f"    {usage}{source}")
         print()
     print(dim("  ● active  ○ stored (ccc assign to switch)  ◌ shared, usage pending  ! needs login"
-              "  + not on that machine  × offline"))
+              "  + not on that machine  × offline  ⊘ disabled"))
     return 0
 
 
@@ -612,7 +613,8 @@ def cmd_machines_list(args: argparse.Namespace) -> int:
             "customized": machines.is_customized(),
             "machines": [
                 {"id": m.id, "name": m.name, "alias": m.alias, "local": m.local,
-                 "enabled": m.enabled, "engine": m.engine, "resolved_engine": m.resolved_engine}
+                 "enabled": m.enabled, "engine": m.engine, "resolved_engine": m.resolved_engine,
+                 "short": m.short}
                 for m in all_machines
             ],
         }))
@@ -683,6 +685,12 @@ def _add_machines_parser(sub) -> None:
     p.add_argument("machine")
     p.set_defaults(func=lambda a: _edit_machines(
         lambda ms: f"stopped polling {machines.set_enabled(ms, a.machine, False).name}"))
+    p = msub.add_parser("short", help="Column label in the account views (no NAME: derived again)")
+    p.add_argument("machine")
+    p.add_argument("short", nargs="?", default="", metavar="NAME")
+    p.set_defaults(func=lambda a: _edit_machines(
+        lambda ms: f"short name: {machines.set_short(ms, a.machine, a.short).short or '(derived)'}"))
+
     p = msub.add_parser("engine", help="How CCC talks to a machine: auto | ccc | cswap")
     p.add_argument("machine")
     p.add_argument("engine", choices=machines.ENGINES)

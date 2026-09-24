@@ -39,6 +39,7 @@ class Machine:
     alias: str | None = None  # SSH alias; None = this machine
     enabled: bool = True  # polled by `ccc snapshot` / the app / the TUI
     engine: str = "auto"
+    short: str = ""  # column label in the account views ("" = derived from the name)
 
     @property
     def local(self) -> bool:
@@ -168,6 +169,7 @@ def load() -> list[Machine]:
             alias=alias,
             enabled=bool(entry.get("enabled", True)),
             engine=entry.get("engine") if entry.get("engine") in ENGINES else "auto",
+            short=str(entry.get("short") or "")[:SHORT_MAX],
         ))
     if LOCAL_ID not in seen:
         machines.insert(0, _local_machine())
@@ -227,6 +229,19 @@ def rename(machines: list[Machine], key: str, name: str) -> Machine:
     if not name.strip():
         raise ConfigError("name must not be empty")
     machine.name = name.strip()
+    return machine
+
+
+SHORT_MAX = 10
+
+
+def set_short(machines: list[Machine], key: str, short: str) -> Machine:
+    """Set the column label ("" goes back to the derived one)."""
+    machine = _require(machines, key)
+    short = short.strip()
+    if len(short) > SHORT_MAX:
+        raise ConfigError(f"short name must be at most {SHORT_MAX} characters")
+    machine.short = short
     return machine
 
 
