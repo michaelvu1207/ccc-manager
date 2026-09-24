@@ -108,4 +108,33 @@ final class MachinesSnapshotTests: XCTestCase {
         let needs = try JSONDecoder().decode(MachinePresence.self, from: Data(#"{"state":"needs_login","num":"2"}"#.utf8))
         XCTAssertEqual(needs.state, .needsLogin)
     }
+
+    func testSyncStatusAndChipSyncDecode() throws {
+        let snapshot = try decode("""
+        {"version":2,"generated_at":1,"providers":[],
+         "sync":{"enabled":true,"hub_url":"https://hub.ts.net","machine":"seablue","role":"agent",
+                 "reachable":true,"error":"","checked_at":5,
+                 "local":{"last_sync":4,"errors":[]},"hub":{"machine":"box"},
+                 "accounts":{"claude|a@x.com|o":{"email":"a@x.com","shared":true,"generation":3,
+                             "expires_at":99,"updated_at":1,"source":"hub-refresh","last_refresh_at":1,"refresh_error":""}},
+                 "machines":{"seablue":{"last_sync":4,"version":"0.20.0","generations":{"claude|a@x.com|o":3},"errors":[]}}},
+         "accounts_view":{"generated_at":1,"machines":[],"accounts":[
+           {"key":"claude|a@x.com|o","provider":"claude","email":"a@x.com","alias":"","label":"a@x.com",
+            "org_name":"","plan":"","windows":[],"usage_stale":false,"usage_from":null,"usage_at":null,
+            "status_message":"","needs_login":false,"disabled":false,"disabled_on":[],"active_on":[],
+            "stored_on":["local"],"shared":true,"hub_generation":3,"refresh_error":"",
+            "machines":{"local":{"state":"stored","num":"1","query":"1","disabled":false,
+                        "sync":{"state":"in_sync","generation":3,"hub_generation":3,"last_sync":4}}},
+            "consumable_resets":null,"consumable_reset_credits":[]}]}}
+        """)
+        let sync = try XCTUnwrap(snapshot.sync)
+        XCTAssertTrue(sync.enabled)
+        XCTAssertEqual(sync.machines?["seablue"]?.generations?["claude|a@x.com|o"], 3)
+        let account = try XCTUnwrap(snapshot.accountsView?.accounts.first)
+        XCTAssertEqual(account.shared, true)
+        XCTAssertEqual(account.presence(on: "local")?.sync?.state, "in_sync")
+        let off = try decode(#"{"version":2,"generated_at":1,"providers":[],"sync":{"enabled":false}}"#)
+        XCTAssertEqual(off.sync?.enabled, false)
+        XCTAssertNil(off.sync?.hubUrl)
+    }
 }

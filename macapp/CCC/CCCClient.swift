@@ -137,6 +137,14 @@ actor CCCClient {
         _ = try await runCCC(arguments: arguments, timeout: 30, key: "local")
     }
 
+    /// Share (or stop sharing) an account's login through the sync hub.
+    func setShared(_ shared: Bool, email: String) async throws {
+        var args = ["sync", "share"]
+        if !shared { args.append("--off") }
+        args += ["--", email]
+        _ = try await runCCC(arguments: args, timeout: 30, key: "sync")
+    }
+
     func machineList() async throws -> MachineList {
         let data = try await runCCC(arguments: ["machines", "list", "--json"], timeout: 15, key: "config")
         return try JSONDecoder().decode(MachineList.self, from: data)

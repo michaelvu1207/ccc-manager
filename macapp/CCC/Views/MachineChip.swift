@@ -49,6 +49,13 @@ struct MachineChip: View {
                     .font(.system(size: 8))
                     .help("Disabled on \(machine.name)")
             }
+            if let sync = presence.sync, sync.state != "no_agent" {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(sync.state == "in_sync"
+                                     ? AnyShapeStyle(presence.state == .active ? Color.white.opacity(0.85) : Color.secondary)
+                                     : AnyShapeStyle(Color.orange))
+            }
         }
         .font(.caption2.weight(presence.state == .active ? .semibold : .regular))
         .foregroundStyle(foreground)
@@ -134,6 +141,19 @@ struct MachineChip: View {
     private var tooltip: String {
         var text = "\(machine.name): \(stateText)"
         if presence.isDisabled { text += " · disabled here" }
+        if let sync = presence.sync {
+            switch sync.state {
+            case "in_sync":
+                text += " · shared login in sync (gen \(sync.hubGeneration ?? 0))"
+            case "behind":
+                text += " · shared login behind the hub (gen \(sync.generation ?? 0) of \(sync.hubGeneration ?? 0))"
+            default:
+                text += " · shared, but no sync agent reports from this machine"
+            }
+            if let last = sync.lastSync {
+                text += ", synced \(MachineSection.age(since: last)) ago"
+            }
+        }
         return text
     }
 

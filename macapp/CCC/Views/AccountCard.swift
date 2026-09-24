@@ -80,6 +80,14 @@ struct AccountCard: View {
                     .foregroundStyle(.secondary)
                     .help("Disabled on: " + account.disabledOn.map { state.name(ofMachine: $0) }.joined(separator: ", "))
             }
+            if account.shared == true {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(account.refreshError?.isEmpty == false ? Color.orange : Color.secondary)
+                    .help(account.refreshError?.isEmpty == false
+                          ? "Shared login · hub refresh failed: \(account.refreshError ?? "")"
+                          : "Shared login · the hub keeps it fresh on every machine (gen \(account.hubGeneration ?? 0))")
+            }
             if !account.plan.isEmpty {
                 Text(account.plan)
                     .font(.caption2)
@@ -179,6 +187,12 @@ struct AccountCard: View {
                         Task { await state.setDisabledEverywhere(false, account: account) }
                     }
                     .disabled(account.disabledOn.isEmpty)
+                    Divider()
+                }
+                if let shared = account.shared {
+                    Button(shared ? "Stop sharing this login" : "Share this login with all machines") {
+                        Task { await state.setShared(!shared, account: account) }
+                    }
                     Divider()
                 }
                 Button("Copy email") { state.copyEmail(account) }

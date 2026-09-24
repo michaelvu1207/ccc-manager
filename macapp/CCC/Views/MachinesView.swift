@@ -50,6 +50,7 @@ struct MachinesView: View {
                 .frame(maxHeight: 420)
                 .fixedSize(horizontal: false, vertical: true)
                 addForm
+                SyncSection()
                 Text(list.customized
                      ? "Saved in \(abbreviated(list.configPath))"
                      : "Default list: this Mac + Starline hosts. Changes are saved to \(abbreviated(list.configPath)).")
@@ -222,5 +223,87 @@ private struct MachineConfigRow: View {
     private func commit() {
         editing = false
         Task { await state.renameMachine(machine, to: draft) }
+    }
+}
+
+/// Shared-login sync: hub, reachability, and each machine's last report.
+private struct SyncSection: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().padding(.vertical, 4)
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.secondary)
+                Text("Shared logins")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                if let sync = state.sync, sync.enabled {
+                    Circle()
+                        .fill(sync.reachable == false ? Color.red : (sync.reachable == true ? Color.green : Color.secondary))
+                        .frame(width: 6, height: 6)
+                    Text(sync.reachable == false ? "hub unreachable" : "hub online")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let sync = state.sync, sync.enabled {
+                Text(sync.hubUrl ?? "")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let error = sync.error, !error.isEmpty {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+                ForEach(machineRows(sync), id: \.name) { row in
+                    HStack(spacing: 6) {
+                        Text(row.name)
+                            .font(.caption)
+                        Spacer()
+                        Text(row.detail)
+                            .font(.caption2)
+                            .foregroundStyle(row.problem ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                            .lineLimit(1)
+                    }
+                    .help(row.errors.joined(separator: "\n"))
+                }
+                Text("One hub refreshes every shared login; machines only receive and upload copies.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Off. Set up with `ccc sync init` on one always-on machine and `ccc sync join` on the others (see README).")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private struct Row {
+        let name: String
+        let detail: String
+        let problem: Bool
+        let errors: [String]
+    }
+
+    private func machineRows(_ sync: SyncStatus) -> [Row] {
+        let hubGens = (sync.accounts ?? [:]).filter { $0.value.shared != false }
+            .mapValues { $0.generation ?? 0 }
+        return (sync.machines ?? [:]).sorted { $0.key < $1.key }.map { name, info in
+            let behind = hubGens.filter { info.generations?[$0.key] != $0.value }.count
+            let errors = info.errors ?? []
+            var detail = info.lastSync.map { "synced \(MachineSection.age(since: $0)) ago" } ?? "never synced"
+            if behind > 0 { detail += " · \(behind) behind" }
+            if !errors.isEmpty { detail += " · \(errors.count) error\(errors.count == 1 ? "" : "s")" }
+            return Row(name: name + (name == sync.machine ? " (this Mac)" : ""), detail: detail,
+                       problem: behind > 0 || !errors.isEmpty, errors: errors)
+        }
     }
 }

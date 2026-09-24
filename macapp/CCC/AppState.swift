@@ -9,6 +9,8 @@ final class AppState: ObservableObject {
     @Published private(set) var snapshot: Snapshot?
     /// One row per account with its state on every machine (ccc >= 0.19).
     @Published private(set) var view: AccountsView?
+    /// Shared-login sync status (nil with an older ccc).
+    @Published private(set) var sync: SyncStatus?
     /// Machines in display order (this Mac first), each with its accounts.
     @Published private(set) var machines: [MachineSnapshot] = []
     /// Machine ids with a live probe in flight.
@@ -118,6 +120,7 @@ final class AppState: ObservableObject {
             self.snapshot = snapshot
             machines = snapshot.machineList
             view = snapshot.accountsView
+            sync = snapshot.sync
             hasLoaded = true
             errorMessage = nil
         } catch {
@@ -168,6 +171,7 @@ final class AppState: ObservableObject {
     /// a snapshot that includes this Mac also replaces `snapshot` (costs).
     private func absorb(_ update: Snapshot) {
         if let view = update.accountsView { self.view = view }
+        if let sync = update.sync { self.sync = sync }
         if let machines = update.machines {
             merge(machines)
             if machines.contains(where: { $0.local }) { snapshot = update }
@@ -352,6 +356,16 @@ final class AppState: ObservableObject {
         guard let query = account.presence(on: id)?.query else { return }
         await perform(chipKey(account, id), machineID: id) {
             try await self.client.removeAccount(machine: id, provider: account.provider, account: query)
+        }
+    }
+
+    func setShared(_ shared: Bool, account: ViewAccount) async {
+        do {
+            try await client.setShared(shared, email: account.email)
+            errorMessage = nil
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

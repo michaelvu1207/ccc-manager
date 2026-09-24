@@ -11,6 +11,8 @@ struct Snapshot: Codable {
     let machines: [MachineSnapshot]?
     /// Additive (0.19): one row per account with its state on every machine.
     let accountsView: AccountsView?
+    /// Additive (0.20): shared-login sync status.
+    let sync: SyncStatus?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -19,6 +21,7 @@ struct Snapshot: Codable {
         case costs
         case machines
         case accountsView = "accounts_view"
+        case sync
     }
 
     /// Machines to show; older snapshots present their providers as this Mac.
@@ -370,9 +373,11 @@ struct MachinePresence: Codable, Equatable {
     let disabled: Bool?
     /// For offline machines: the last known state ("unknown" if never reached).
     let lastState: String?
+    /// Shared-login sync of this machine's copy (nil when not shared / sync off).
+    var sync: ChipSync? = nil
 
     enum CodingKeys: String, CodingKey {
-        case state, num, query, disabled
+        case state, num, query, disabled, sync
         case lastState = "last_state"
     }
 
@@ -401,6 +406,10 @@ struct ViewAccount: Codable, Identifiable {
     let machines: [String: MachinePresence]
     let consumableResets: Int?
     let consumableResetCredits: [ResetCredit]?
+    /// Shared-login sync: nil = sync off (or a Codex account).
+    var shared: Bool? = nil
+    var hubGeneration: Int? = nil
+    var refreshError: String? = nil
 
     var id: String { key }
 
@@ -417,10 +426,84 @@ struct ViewAccount: Codable, Identifiable {
         case storedOn = "stored_on"
         case consumableResets = "consumable_resets"
         case consumableResetCredits = "consumable_reset_credits"
+        case shared
+        case hubGeneration = "hub_generation"
+        case refreshError = "refresh_error"
     }
 
     func presence(on machine: String) -> MachinePresence? { machines[machine] }
 
     /// Disabled on some machines but not all: shown per chip instead.
     var mixedDisabled: Bool { !disabled && !disabledOn.isEmpty }
+}
+
+// MARK: - Shared-login sync (0.20)
+
+struct ChipSync: Codable, Equatable {
+    /// "in_sync" | "behind" | "no_agent"
+    let state: String
+    let generation: Int?
+    let hubGeneration: Int?
+    let lastSync: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case state, generation
+        case hubGeneration = "hub_generation"
+        case lastSync = "last_sync"
+    }
+}
+
+struct SyncStatus: Codable {
+    let enabled: Bool
+    let hubUrl: String?
+    let machine: String?
+    let role: String?
+    let reachable: Bool?
+    let error: String?
+    let checkedAt: Double?
+    let local: SyncLocal?
+    let accounts: [String: SyncAccount]?
+    let machines: [String: SyncMachine]?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, machine, role, reachable, error, local, accounts, machines
+        case hubUrl = "hub_url"
+        case checkedAt = "checked_at"
+    }
+}
+
+struct SyncLocal: Codable {
+    let lastSync: Double?
+    let errors: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case errors
+        case lastSync = "last_sync"
+    }
+}
+
+struct SyncAccount: Codable {
+    let email: String?
+    let shared: Bool?
+    let generation: Int?
+    let expiresAt: Double?
+    let refreshError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case email, shared, generation
+        case expiresAt = "expires_at"
+        case refreshError = "refresh_error"
+    }
+}
+
+struct SyncMachine: Codable {
+    let lastSync: Double?
+    let version: String?
+    let generations: [String: Int]?
+    let errors: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case version, generations, errors
+        case lastSync = "last_sync"
+    }
 }
