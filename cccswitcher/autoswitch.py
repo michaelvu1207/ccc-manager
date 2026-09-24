@@ -113,7 +113,7 @@ def tick(provider: str, *, dry_run: bool = False, now: float | None = None) -> d
         return {"event": "no-switch", "reason": "cooldown", "provider": provider}
     candidates = []
     for account in accounts:
-        if account.active:
+        if account.active or getattr(account, "disabled", False):
             continue
         used = _binding(account.usage, provider)
         if used is not None and used <= settings.threshold - settings.hysteresis_pct:

@@ -79,6 +79,8 @@ class ClaudeAccount:
     active: bool
     usage: dict | str | None = field(default=None)
     kind: str = "oauth"
+    # Held out of auto-rotation (`cswap disable`-compatible registry flag).
+    disabled: bool = False
 
 
 def cswap_available() -> bool:
@@ -568,7 +570,7 @@ def load_accounts(refresh: bool = True) -> tuple[list[ClaudeAccount], float | No
             num=num, email=email, org_name=info.get("organizationName") or "",
             org_uuid=org_uuid,
             active=(identity == (email, org_uuid)) or (kind == "api_key" and num == active_number),
-            usage=usage.get(num), kind=kind,
+            usage=usage.get(num), kind=kind, disabled=bool(info.get("disabled")),
         ))
     return accounts, cached.get("timestamp")
 
@@ -578,11 +580,16 @@ def _resolve(query: str | None, registry: dict) -> str | None:
     if not sequence:
         return None
     if query is None:
+        # Rotation skips disabled slots (they stay valid explicit targets).
         active = str(registry.get("activeAccountNumber") or "")
-        try:
-            return sequence[(sequence.index(active) + 1) % len(sequence)]
-        except ValueError:
-            return sequence[0]
+        rotation = [n for n in sequence if not registry["accounts"].get(n, {}).get("disabled")] or sequence
+        if active in sequence:
+            start = sequence.index(active)
+            for step in range(1, len(sequence) + 1):
+                candidate = sequence[(start + step) % len(sequence)]
+                if candidate in rotation:
+                    return candidate
+        return rotation[0]
     exact = [n for n in sequence if n == query or registry["accounts"][n].get("email") == query]
     partial = [n for n in sequence if query.lower() in registry["accounts"][n].get("email", "").lower()]
     return (exact or partial or [None])[0]
@@ -593,7 +600,7 @@ def switch_account(query: str | None = None, strategy: str = "next") -> ClaudeAc
     registry = _registry()
     if strategy in ("best", "next-available"):
         accounts, _ = load_accounts(refresh=True)
-        candidates = [a for a in accounts if isinstance(a.usage, dict)]
+        candidates = [a for a in accounts if isinstance(a.usage, dict) and not a.disabled]
         if strategy == "next-available":
             candidates = [a for a in candidates if max(
                 [w.get("pct", 100) for w in (a.usage.get("five_hour"), a.usage.get("seven_day")) if w] or [100]
@@ -680,6 +687,27 @@ def save_current_account(query: str) -> ClaudeAccount:
             f"current Claude login is {current}; sign in as {expected[0]} before saving slot {num}"
         )
     return add_current_account(slot=int(num), replace=True)
+
+
+def set_disabled(query: str, disabled: bool) -> ClaudeAccount:
+    """Hold an account out of auto-rotation, or return it (claude-swap's flag).
+
+    Disabled accounts stay valid explicit switch targets; only rotation and
+    auto-switch skip them.
+    """
+    with file_lock(backup_dir() / ".ccc.lock"):
+        registry = _registry()
+        num = _resolve(query, registry)
+        if num is None:
+            raise ValueError(f"no Claude account matches {query!r}")
+        info = registry["accounts"][num]
+        if disabled:
+            info["disabled"] = True
+        else:
+            info.pop("disabled", None)
+        atomic_write_json(sequence_file(), registry)
+    return ClaudeAccount(num, info.get("email", "unknown"), info.get("organizationName") or "",
+                         info.get("organizationUuid") or "", False, disabled=disabled)
 
 
 def remove_account(query: str) -> ClaudeAccount:

@@ -8,9 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		07617E902DAF192BB63D8781 /* CCCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2C0DE6BEE2CA234EBFBCDDA /* CCCClient.swift */; };
-		0EE907A37EDEBDCBACA984A5 /* ccc-banner-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 53EDEAE8BD0BC76333877097 /* ccc-banner-light.png */; };
 		1A12399556C94F339DC7D2CD /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C304B4298C59F93DADBD8BC /* AppState.swift */; };
-		23907CFDB75CC064656771B1 /* ccc-banner-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = CB38E800D17A1DFA42D91536 /* ccc-banner-dark.png */; };
 		322FFA74C42FDE6E84114326 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E394E9A7682AB7FEBD3E76 /* Snapshot.swift */; };
 		338215E909E54AB0EA88CF2C /* CCCApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88AD8B6526D20C7E19D9232 /* CCCApp.swift */; };
 		8CC4121B2982A17C9F19FD17 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB2641683065D2A1AF47640D /* PopoverView.swift */; };
@@ -19,7 +17,9 @@
 		9F6261A8A6AC81FA1C7BCD21 /* WeeklyCostViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DAFC845DCE5FA7C37D48E3 /* WeeklyCostViewModelTests.swift */; };
 		CB1B2B489C6DF7F56188504F /* snapshot-v2.json in Resources */ = {isa = PBXBuildFile; fileRef = 1DAAC5D256D3AB061AB698C8 /* snapshot-v2.json */; };
 		D5344C6DEDFCA3ECB60B0CB1 /* LoginLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97A3496FAE3149F4B48E777 /* LoginLauncher.swift */; };
+		DED3F21D06A5D2573C331E40 /* ccc-banner-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 2E9BF8BB85306501AFB0B805 /* ccc-banner-light.png */; };
 		F05BCA2B7BB6077EEFE760A6 /* UsageBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09D507806026ED4C843E0ED /* UsageBar.swift */; };
+		F66F05FFC65A0B96A58DC88A /* ccc-banner-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 4175050AA0F7115DCC3AE0A2 /* ccc-banner-dark.png */; };
 		FC5E2382B779810CECD94F05 /* WeeklyCostViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2038801DFFC4AC9C410E45C5 /* WeeklyCostViewModel.swift */; };
 /* End PBXBuildFile section */
 
@@ -40,13 +40,13 @@
 		13660253742C3ADD3CDC91AF /* CCC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CCC.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1DAAC5D256D3AB061AB698C8 /* snapshot-v2.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "snapshot-v2.json"; sourceTree = "<group>"; };
 		2038801DFFC4AC9C410E45C5 /* WeeklyCostViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyCostViewModel.swift; sourceTree = "<group>"; };
+		2E9BF8BB85306501AFB0B805 /* ccc-banner-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-light.png"; sourceTree = "<group>"; };
+		4175050AA0F7115DCC3AE0A2 /* ccc-banner-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-dark.png"; sourceTree = "<group>"; };
 		4F5E8596A5BCA7A61D76D317 /* CCCTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CCCTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		53EDEAE8BD0BC76333877097 /* ccc-banner-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-light.png"; sourceTree = "<group>"; };
 		68E394E9A7682AB7FEBD3E76 /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
 		96BDBEB4E2D13A2B85F14029 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C88AD8B6526D20C7E19D9232 /* CCCApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CCCApp.swift; sourceTree = "<group>"; };
 		C97A3496FAE3149F4B48E777 /* LoginLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginLauncher.swift; sourceTree = "<group>"; };
-		CB38E800D17A1DFA42D91536 /* ccc-banner-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-dark.png"; sourceTree = "<group>"; };
 		E09D507806026ED4C843E0ED /* UsageBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBar.swift; sourceTree = "<group>"; };
 		E2C0DE6BEE2CA234EBFBCDDA /* CCCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CCCClient.swift; sourceTree = "<group>"; };
 		EB2641683065D2A1AF47640D /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
@@ -86,15 +86,6 @@
 			path = CCCTests;
 			sourceTree = "<group>";
 		};
-		487DDAA59BAAFD3F774E3AA9 /* CCCSwitcher */ = {
-			isa = PBXGroup;
-			children = (
-				8AB2E0E6529C79623F89230C /* assets */,
-			);
-			name = CCCSwitcher;
-			path = ..;
-			sourceTree = "<group>";
-		};
 		4B95DC5638563E70D98E7959 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -106,20 +97,11 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		8AB2E0E6529C79623F89230C /* assets */ = {
-			isa = PBXGroup;
-			children = (
-				CB38E800D17A1DFA42D91536 /* ccc-banner-dark.png */,
-				53EDEAE8BD0BC76333877097 /* ccc-banner-light.png */,
-			);
-			path = assets;
-			sourceTree = "<group>";
-		};
 		A594C0B3F6FD2B60FB43F5F4 = {
 			isa = PBXGroup;
 			children = (
 				228C1B9A2A88D0D7BCA183E4 /* CCC */,
-				487DDAA59BAAFD3F774E3AA9 /* CCCSwitcher */,
+				F3FDBB6C8E242DB203F312DD /* CCCSwitcher-remote */,
 				46A6DE3268025A8A5DFAAA0C /* CCCTests */,
 				BCC9028AA0CF1F3FCB01D913 /* Products */,
 			);
@@ -132,6 +114,24 @@
 				4F5E8596A5BCA7A61D76D317 /* CCCTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		D676AE1BECC0B0E049B30F1B /* assets */ = {
+			isa = PBXGroup;
+			children = (
+				4175050AA0F7115DCC3AE0A2 /* ccc-banner-dark.png */,
+				2E9BF8BB85306501AFB0B805 /* ccc-banner-light.png */,
+			);
+			path = assets;
+			sourceTree = "<group>";
+		};
+		F3FDBB6C8E242DB203F312DD /* CCCSwitcher-remote */ = {
+			isa = PBXGroup;
+			children = (
+				D676AE1BECC0B0E049B30F1B /* assets */,
+			);
+			name = "CCCSwitcher-remote";
+			path = ..;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -213,8 +213,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				23907CFDB75CC064656771B1 /* ccc-banner-dark.png in Resources */,
-				0EE907A37EDEBDCBACA984A5 /* ccc-banner-light.png in Resources */,
+				F66F05FFC65A0B96A58DC88A /* ccc-banner-dark.png in Resources */,
+				DED3F21D06A5D2573C331E40 /* ccc-banner-light.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
