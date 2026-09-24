@@ -164,13 +164,16 @@ class SyncState(unittest.TestCase):
         key = "claude|a@x.com|o1"
         pending = dict(acct("1", "a@x.com", org="o1"), usage_pending=True)
         machines_ = [machine("local", [pending], local=True),
-                     machine("box", [acct("1", "a@x.com", org="o1", needs_login=True)])]
+                     machine("box", [acct("1", "a@x.com", org="o1", needs_login=True)]),
+                     machine("lap", [acct("3", "a@x.com", org="o1")])]
         alive = {"enabled": True, "accounts": {key: {"shared": True, "generation": 1}}, "machines": {}}
         dead = {"enabled": True, "machines": {},
                 "accounts": {key: {"shared": True, "generation": 1, "refresh_error": "refresh failed"}}}
         a = accounts_view.build(machines_, sync=alive)["accounts"][0]
         self.assertEqual(a["machines"]["local"]["state"], "pending")
         self.assertTrue(a["usage_pending"])
+        self.assertEqual(a["machines"]["lap"]["state"], "stored")
         a = accounts_view.build(machines_, sync=dead)["accounts"][0]
         self.assertEqual(a["machines"]["local"]["state"], "needs_login")
+        self.assertEqual(a["machines"]["lap"]["state"], "needs_login")
         self.assertFalse(a["usage_pending"])

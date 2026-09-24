@@ -115,15 +115,16 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
         records: dict[str, dict] = group["records"]
         best_mid, best = max(records.items(), key=lambda kv: _usage_rank(kv[1]))
         first = next(iter(records.values()))
-        # The hub could not refresh this shared login: every copy is dead,
-        # so a local "usage pending" copy really needs a fresh login.
+        # The hub could not refresh this shared login. A machine with a newer,
+        # working copy would have uploaded it (the hub adopts newer copies), so
+        # every stored or pending copy is dead too and needs a fresh login.
         hub_dead = bool(((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("refresh_error"))
         per_machine = {}
         for m in shown:
             acct = records.get(m["id"])
             online = bool(m.get("online")) and bool(m.get("has_data", True))
             entry = {"state": _state(acct, online)}
-            if hub_dead and entry["state"] == PENDING:
+            if hub_dead and entry["state"] in (PENDING, STORED):
                 entry["state"] = NEEDS_LOGIN
             if acct is not None:
                 entry["num"] = acct.get("num")
