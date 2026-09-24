@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// One machine on an account row. Its look says what the account is there:
-/// filled = active, outline = stored (click switches), orange = needs login
+/// filled = active, outline = stored (click switches), clock = shared login
+/// with usage not read yet (neutral; click switches), orange = needs login
 /// (click re-logs in), dashed "+" = not there (click starts a login there),
 /// dimmed = machine offline.
 struct MachineChip: View {
@@ -73,6 +74,7 @@ struct MachineChip: View {
         switch presence.state {
         case .active: return "checkmark"
         case .stored: return platformSymbol(machine.platform, local: machine.local)
+        case .pending: return "clock"
         case .needsLogin: return "exclamationmark"
         case .absent: return "plus"
         case .offline: return "wifi.slash"
@@ -83,6 +85,7 @@ struct MachineChip: View {
         switch presence.state {
         case .active: return .white
         case .stored: return .primary
+        case .pending: return .secondary
         case .needsLogin: return .orange
         case .absent, .offline: return .secondary
         }
@@ -92,7 +95,7 @@ struct MachineChip: View {
         switch presence.state {
         case .active: return .accentColor
         case .needsLogin: return Color.orange.opacity(0.14)
-        case .stored: return hovering ? Color.primary.opacity(0.08) : .clear
+        case .stored, .pending: return hovering ? Color.primary.opacity(0.08) : .clear
         case .absent: return hovering ? Color.primary.opacity(0.06) : .clear
         case .offline: return Color.primary.opacity(0.04)
         }
@@ -105,6 +108,8 @@ struct MachineChip: View {
             EmptyView()
         case .stored:
             Capsule().strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1)
+        case .pending:
+            Capsule().strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1)
         case .needsLogin:
             Capsule().strokeBorder(Color.orange.opacity(0.7), lineWidth: 1)
         case .absent:
@@ -119,7 +124,7 @@ struct MachineChip: View {
 
     private var clickable: Bool {
         switch presence.state {
-        case .stored, .needsLogin: return true
+        case .stored, .pending, .needsLogin: return true
         case .absent: return isClaude || machine.local
         case .active, .offline: return false
         }
@@ -129,6 +134,7 @@ struct MachineChip: View {
         switch presence.state {
         case .active: return "active"
         case .stored: return "stored — click to switch this machine to it"
+        case .pending: return "\(presence.note ?? "usage pending") — shared login, click to switch this machine to it"
         case .needsLogin: return "needs login — click to sign in there"
         case .absent: return clickable ? "not on this machine — click to sign in there"
                                        : "not on this machine — run codex login there"
@@ -160,7 +166,7 @@ struct MachineChip: View {
     @ViewBuilder
     private var menu: some View {
         Text(machine.name)
-        if presence.state == .stored {
+        if presence.state == .stored || presence.state == .pending {
             Button("Switch here") { Task { await state.switchHere(account, machine: machine.id) } }
         }
         if presence.isPresent && presence.state != .offline && (isClaude || machine.local) {

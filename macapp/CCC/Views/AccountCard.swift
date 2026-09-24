@@ -107,7 +107,8 @@ struct AccountCard: View {
                 .foregroundStyle(.orange)
         } else if account.windows.isEmpty {
             if !account.statusMessage.isEmpty {
-                Label(account.statusMessage, systemImage: "exclamationmark.circle")
+                Label(account.statusMessage,
+                      systemImage: account.usagePending == true ? "clock" : "exclamationmark.circle")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

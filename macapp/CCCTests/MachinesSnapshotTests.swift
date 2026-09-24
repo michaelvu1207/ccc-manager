@@ -109,6 +109,18 @@ final class MachinesSnapshotTests: XCTestCase {
         XCTAssertEqual(needs.state, .needsLogin)
     }
 
+    func testPendingPresenceIsNeutralNotNeedsLogin() throws {
+        let pending = try JSONDecoder().decode(
+            MachinePresence.self, from: Data(#"{"state":"pending","num":"3","query":"3","note":"usage pending"}"#.utf8))
+        XCTAssertEqual(pending.state, .pending)
+        XCTAssertNotEqual(pending.state, .needsLogin)
+        XCTAssertEqual(pending.note, "usage pending")
+        XCTAssertTrue(pending.isPresent)
+        // A state from a newer CLI decodes as a neutral stored chip.
+        let future = try JSONDecoder().decode(MachinePresence.self, from: Data(#"{"state":"later","num":"4"}"#.utf8))
+        XCTAssertEqual(future.state, .stored)
+    }
+
     func testSyncStatusAndChipSyncDecode() throws {
         let snapshot = try decode("""
         {"version":2,"generated_at":1,"providers":[],

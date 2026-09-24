@@ -283,7 +283,7 @@ final class AppState: ObservableObject {
     func tapChip(_ account: ViewAccount, machine: ViewMachine) async {
         guard let presence = account.presence(on: machine.id) else { return }
         switch presence.state {
-        case .stored:
+        case .stored, .pending:
             await switchHere(account, machine: machine.id)
         case .needsLogin:
             reLogin(account, machine: machine.id)

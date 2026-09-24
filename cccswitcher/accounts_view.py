@@ -150,6 +150,8 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
             "status_message": "" if has_usage else next(
                 (a.get("status_message") for a in records.values() if a.get("status_message")), ""),
             "needs_login": all(a.get("needs_login") for a in records.values()),
+            # A healthy shared login whose usage is not read yet (neutral).
+            "usage_pending": not has_usage and any(a.get("usage_pending") for a in records.values()),
             "disabled": bool(disabled_on) and len(disabled_on) == len(stored_on),
             "disabled_on": disabled_on,
             "active_on": [mid for mid, acct in records.items() if acct.get("active")],

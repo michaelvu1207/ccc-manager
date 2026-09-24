@@ -362,7 +362,16 @@ struct ViewMachine: Codable, Identifiable, Equatable {
 struct MachinePresence: Codable, Equatable {
     enum State: String, Codable {
         case active, stored, absent, offline
+        /// 0.21.1: a healthy shared login whose usage is not read yet
+        /// ("usage pending" / "waiting for hub"). Neutral, not "needs login".
+        case pending
         case needsLogin = "needs_login"
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            // A state from a newer CLI: show it neutral rather than fail the view.
+            self = State(rawValue: raw) ?? .stored
+        }
     }
 
     let state: State
@@ -375,9 +384,11 @@ struct MachinePresence: Codable, Equatable {
     let lastState: String?
     /// Shared-login sync of this machine's copy (nil when not shared / sync off).
     var sync: ChipSync? = nil
+    /// Why a chip is pending ("usage pending", "waiting for hub").
+    var note: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case state, num, query, disabled, sync
+        case state, num, query, disabled, sync, note
         case lastState = "last_state"
     }
 
@@ -410,6 +421,8 @@ struct ViewAccount: Codable, Identifiable {
     var shared: Bool? = nil
     var hubGeneration: Int? = nil
     var refreshError: String? = nil
+    /// 0.21.1: a healthy shared login with no usage read yet.
+    var usagePending: Bool? = nil
 
     var id: String { key }
 
@@ -429,6 +442,7 @@ struct ViewAccount: Codable, Identifiable {
         case shared
         case hubGeneration = "hub_generation"
         case refreshError = "refresh_error"
+        case usagePending = "usage_pending"
     }
 
     func presence(on machine: String) -> MachinePresence? { machines[machine] }

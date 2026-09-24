@@ -195,7 +195,7 @@ struct AccountRow: View {
                                   let message = account.statusMessage,
                                   !message.isEmpty {
                             Label(message, systemImage: account.status == "keychain_unavailable"
-                                  ? "lock" : "exclamationmark.circle")
+                                  ? "lock" : account.status == "pending" ? "clock" : "exclamationmark.circle")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
