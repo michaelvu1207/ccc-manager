@@ -107,6 +107,7 @@ struct PopoverView: View {
     /// One row per account (Claude, then Codex), each with a chip per machine.
     @ViewBuilder
     private func accountList(_ view: AccountsView) -> some View {
+        loginButton
         machineStrip(view.machines)
         ForEach(["claude", "codex"], id: \.self) { provider in
             let rows = view.accounts.filter { $0.provider == provider }
@@ -128,6 +129,23 @@ struct PopoverView: View {
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 8)
         }
+    }
+
+    /// One button for the whole flow: sign in on this Mac, shared everywhere.
+    private var loginButton: some View {
+        Button {
+            state.logInNewAccount()
+        } label: {
+            Label("Log in with new account", systemImage: "person.crop.circle.badge.plus")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.regular)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 2)
+        .help(state.syncEnabled
+              ? "Opens Terminal: sign in once on this Mac; the hub shares it with every machine"
+              : "Opens Terminal: sign in and store the account on this Mac")
     }
 
     /// Machine status line: loading / offline at a glance, plus "add account".

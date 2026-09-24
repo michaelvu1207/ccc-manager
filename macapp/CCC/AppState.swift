@@ -312,6 +312,17 @@ final class AppState: ObservableObject {
             openCodexLogin(machineID: id)
             return
         }
+        if syncEnabled && account.shared == true {
+            // Shared login: one fresh login on this Mac replaces it everywhere.
+            do {
+                try LoginLauncher.openSyncLogin(email: account.email)
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+            refreshSoon()
+            return
+        }
         do {
             try LoginLauncher.openLogin(machine: id, provider: "claude",
                                         num: account.presence(on: id)?.num)
@@ -366,6 +377,35 @@ final class AppState: ObservableObject {
             await refresh()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Sync is set up, so a login on this Mac reaches every machine.
+    var syncEnabled: Bool { sync?.enabled == true }
+
+    /// "Log in with new account": with sync, one login on this Mac shared with
+    /// every machine; without sync, a login stored on this Mac only.
+    func logInNewAccount() {
+        do {
+            if syncEnabled {
+                try LoginLauncher.openSyncLogin(email: nil)
+            } else {
+                try LoginLauncher.openAddAccount(machine: localMachine?.id ?? "local")
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        refreshSoon()
+    }
+
+    /// After a Terminal login: refresh a few times while machines pull it.
+    private func refreshSoon() {
+        Task {
+            for delay in [45.0, 60.0, 90.0] {
+                try? await Task.sleep(for: .seconds(delay))
+                await refresh()
+            }
         }
     }
 

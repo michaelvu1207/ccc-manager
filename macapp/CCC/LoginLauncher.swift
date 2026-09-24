@@ -12,6 +12,14 @@ enum LoginLauncher {
         try openTerminal(cccArguments: args, name: "ccc-login")
     }
 
+    /// One-button login on this Mac, shared through the sync hub
+    /// (`ccc sync login`). With an email it re-logs that account.
+    static func openSyncLogin(email: String?) throws {
+        var args = ["sync", "login"]
+        if let email { args += ["--email", email] }
+        try openTerminal(cccArguments: args, name: "ccc-sync-login")
+    }
+
     /// Log in a new Claude account on a machine, then `cswap add` it.
     static func openAddAccount(machine: String) throws {
         try openTerminal(cccArguments: ["add-account", "--machine", machine], name: "ccc-add-account")
