@@ -159,3 +159,18 @@ class SyncState(unittest.TestCase):
         self.assertNotIn("sync", b["machines"]["local"])
         off = accounts_view.build([machine("local", [acct("1", "a@x.com")], local=True)])
         self.assertIsNone(off["accounts"][0]["shared"])
+
+    def test_pending_copy_of_a_dead_shared_login_needs_login(self):
+        key = "claude|a@x.com|o1"
+        pending = dict(acct("1", "a@x.com", org="o1"), usage_pending=True)
+        machines_ = [machine("local", [pending], local=True),
+                     machine("box", [acct("1", "a@x.com", org="o1", needs_login=True)])]
+        alive = {"enabled": True, "accounts": {key: {"shared": True, "generation": 1}}, "machines": {}}
+        dead = {"enabled": True, "machines": {},
+                "accounts": {key: {"shared": True, "generation": 1, "refresh_error": "refresh failed"}}}
+        a = accounts_view.build(machines_, sync=alive)["accounts"][0]
+        self.assertEqual(a["machines"]["local"]["state"], "pending")
+        self.assertTrue(a["usage_pending"])
+        a = accounts_view.build(machines_, sync=dead)["accounts"][0]
+        self.assertEqual(a["machines"]["local"]["state"], "needs_login")
+        self.assertFalse(a["usage_pending"])
