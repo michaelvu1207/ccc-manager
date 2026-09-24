@@ -249,6 +249,36 @@ Shared by default: every Claude account, once sync is set up. Stop sharing one
 with `ccc sync share <email> --off` (or the account's `…` menu in the app);
 the hub then drops its copy.
 
+**CCC never refreshes a shared login outside the hub (0.21.1).** Each agent
+round records the logins the hub shares in `sync-state.json`
+(`hub_shared`). CCC's own engine (the app, `ccc list`, auto-switch) refreshes
+only logins that are not in that list. For a shared login whose local copy
+has expired, it does not call the token endpoint and does not read usage; it
+pulls once from the hub (a read) and shows **waiting for hub** until a fresh
+copy arrives. After each pull that creates or updates a login, the agent
+reads that login's usage (usage API only, with the pulled access token). Until
+then the login shows **usage pending**: a neutral chip, not "needs login".
+The agent pulls first at start and after wake; it checks the wall clock every
+10 s, so it sees a wake within seconds.
+
+**Residual risk: other refreshers.** CCC controls only its own code. These can
+still refresh a shared login and so break the hub's copy:
+
+- **Claude Code itself.** While it runs, it refreshes the active login when
+  the access token expires. The hub refreshes 2 h early and agents pull
+  within seconds, so this needs a copy that expired before its agent pulled
+  (for example, a machine that slept for hours and runs Claude Code right
+  after wake, before the agent's first round).
+- **cswap on the remotes.** CCC probes remotes with `cswap list --json`, and
+  cswap 0.26 refreshes an expired slot during `list`, `switch` and `auto`. It
+  has no option to list without a refresh. The agent keeps slot copies fresh,
+  so this also needs a copy that expired before the agent pulled.
+- **CCC 0.21.0 or older** on any machine. Upgrade every machine.
+
+`"withhold_refresh_token": true` on the hub removes these risks on the other
+machines (they get no refresh token), but then Claude Code there stops when
+the hub is down for longer than an access token lives.
+
 ### Logging in: one button, on this Mac
 
 "Log in with new account" at the top of the app's Accounts tab (or
@@ -291,7 +321,10 @@ Claude Code stores (`{"claudeAiOauth": {...}}`).
 
 - `~/.config/ccc/sync.json` (0600): hub URL, shared secret, this machine's
   name; on the hub also bind address, port, `withhold_refresh_token`.
-- `~/.config/ccc/sync-state.json` (0600): this agent's last sync and generations.
+- `~/.config/ccc/sync-state.json` (0600): this agent's last sync, generations,
+  and the hub's shared logins (`hub_shared`), which CCC never refreshes.
+- CCC's usage cache: `ccc-usage.json` in the cswap data directory's `cache/`
+  (0.21.1; cswap 0.26 owns `cache/usage.json`).
 - Hub store: `~/.local/share/ccc/hub/store.json` (0600).
 
 Nothing logs tokens; errors are redacted. The secret is only in sync.json and
