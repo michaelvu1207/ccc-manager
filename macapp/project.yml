@@ -18,8 +18,8 @@ targets:
       path: CCC/Info.plist
       properties:
         CFBundleDisplayName: CCC Manager
-        CFBundleShortVersionString: "0.18.0"
-        CFBundleVersion: "18"
+        CFBundleShortVersionString: "0.19.0"
+        CFBundleVersion: "19"
         LSUIElement: true
         NSHumanReadableCopyright: ""
     settings:

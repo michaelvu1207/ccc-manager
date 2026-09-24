@@ -33,9 +33,10 @@ compatible and migrate in place without deleting the source data.
   appear as a misleading `$0`.
 - Curses TUI, plain CLI, additive snapshot schema v2, and native SwiftUI menu bar
   chart with accessible loading/empty/error/detail states.
-- Multi-machine view: accounts on your other Macs and Linux boxes (over SSH /
-  Tailscale), grouped by machine, with online/offline status and per-machine
-  switch, disable/enable, re-login, add, and remove.
+- One account, many computers: every account appears once, with its usage and
+  its state on each of your Macs and Linux boxes (over SSH / Tailscale) —
+  active, stored, needs login, not there, or offline — and one click to make it
+  active on a machine.
 - Standard-library Python 3.10+ runtime on macOS and Linux.
 
 ## Install and upgrade
@@ -177,6 +178,38 @@ Data sources:
 - Codex: `${CODEX_HOME:-~/.codex}/{sessions,archived_sessions}/**/*.jsonl`
 - Price table: `cccswitcher/pricing.py` (`pricing_version` is emitted in JSON)
 
+## Accounts across machines
+
+`ccc accounts` (and the menu-bar app's Accounts tab, and the TUI's default
+view) lists each account once. Accounts are matched across machines by
+provider + email (+ organization for Claude). Each shows the freshest usage
+any machine reported ("as of 5m ago from path-pc"), and one state per machine:
+
+| Chip | Meaning | Click |
+|---|---|---|
+| ● filled | active login on that machine | — |
+| ○ outline | stored there, not active | switch that machine to it |
+| ! orange | stored, but its login is dead | re-login on that machine |
+| + dashed | not on that machine | open Terminal there: `/login`, then save it |
+| × dimmed | machine offline (last known state) | — |
+
+```sh
+ccc accounts                           # account-centric table with machine chips
+ccc accounts --no-refresh --json       # the same view as JSON (also `accounts_view` in ccc snapshot)
+ccc assign alice@example.com --machine path-pc   # switch if stored there, else start a login there
+ccc disable alice@example.com --everywhere       # every machine that stores it
+```
+
+**Credentials never move between machines.** Refresh tokens rotate, so a
+copied credential would break the other copy. "Giving" an account to a machine
+always means switching to that machine's own stored login, or signing in on
+that machine with a fresh `/login`. A disabled state is per machine; an
+account shows "(disabled)" when every machine that stores it has it disabled,
+and "(disabled on N)" otherwise.
+
+In the TUI, ←/→ pick a machine chip on the selected account, Enter acts on
+it, and `m` switches to the machine-grouped view.
+
 ## Machines
 
 CCC shows this Mac plus any SSH host you can reach with
@@ -227,17 +260,19 @@ the login keychain for SSH sessions.
 ## macOS menu-bar app
 
 The native app renders `ccc snapshot`; it never reads tokens itself. The
-Accounts tab groups accounts by machine (collapsible sections with a status
-dot and platform icon; offline machines are dimmed with "last seen"). Each
-row has a `…` menu: Switch here, Re-login, Disable/Enable, and Remove (with an
-inline confirmation). A section's `+` opens Terminal to add an account on that
-machine. The server-rack button in the footer opens the Machines screen (add,
+Accounts tab lists each account once (Claude, then Codex; active somewhere
+first, then lowest usage) with its usage bars and a wrapping row of machine
+chips (see the table above). A chip's context menu offers Switch here,
+Re-login, Disable/Enable on this machine, and Remove from this machine (with
+an inline confirmation); the row's `…` menu offers Disable/Enable everywhere
+and Copy email. A strip at the top shows each machine's status (click it to
+add an account there or refresh it). The server-rack button in the footer opens the Machines screen (add,
 rename, remove, pause polling, import from Starline). The Usage tab's compact
 chart distinguishes Claude (orange) and Codex (blue), shows today/week totals,
 and expands to provider/account/model/token details.
 
 ```sh
-tools/build_macapp.sh Release
+tools/build_macapp.sh Release     # builds and ad-hoc signs the app
 open macapp/build/Build/Products/Release/CCC.app
 ```
 

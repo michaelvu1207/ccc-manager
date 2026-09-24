@@ -21,3 +21,12 @@ env -u LC_ALL -u LC_CTYPE LANG=en_US.UTF-8 \
   -derivedDataPath build \
   CODE_SIGNING_ALLOWED=NO \
   "$action"
+
+# The build above is unsigned (CODE_SIGNING_ALLOWED=NO). Ad-hoc sign the
+# product so `codesign --verify --deep --strict` passes and Gatekeeper-less
+# local launches work.
+if [ "$action" = "build" ]; then
+  app="$root/macapp/build/Build/Products/$configuration/CCC.app"
+  codesign --force --deep --sign - "$app"
+  codesign --verify --deep --strict --verbose=1 "$app"
+fi
