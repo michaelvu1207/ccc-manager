@@ -23,15 +23,19 @@ def scp_command() -> str:
     return os.environ.get("CCC_SCP", "scp")
 
 
-def source_root() -> Path | None:
-    root = Path(__file__).resolve().parents[1]
-    return root if (root / "pyproject.toml").exists() else None
+def source_root(explicit: Path | None = None) -> Path | None:
+    """A ccc-manager checkout to build from: --source, $CCC_SOURCE_DIR, or ours."""
+    for candidate in (explicit, os.environ.get("CCC_SOURCE_DIR"), Path(__file__).resolve().parents[1]):
+        if candidate and (Path(candidate) / "pyproject.toml").exists():
+            return Path(candidate)
+    return None
 
 
-def build_wheel(out_dir: Path) -> Path:
-    root = source_root()
+def build_wheel(out_dir: Path, source: Path | None = None) -> Path:
+    root = source_root(source)
     if root is None:
-        raise RuntimeError("not running from a source checkout; pass --wheel PATH")
+        raise RuntimeError("ccc is installed as a wheel: pass --source <checkout> "
+                           "(or set CCC_SOURCE_DIR), or --wheel PATH")
     result = subprocess.run(["uv", "build", "--wheel", "-o", str(out_dir), str(root)],
                             capture_output=True, text=True, timeout=300)
     if result.returncode:
@@ -57,10 +61,11 @@ def install_commands(machine: Machine, wheel: Path) -> list[list[str]]:
     ]
 
 
-def install(machine: Machine, wheel: Path | None = None, timeout: float = 300) -> str:
+def install(machine: Machine, wheel: Path | None = None, timeout: float = 300,
+            source: Path | None = None) -> str:
     """Returns the installed `ccc --version` line."""
     with tempfile.TemporaryDirectory(prefix="ccc-wheel-") as tmp:
-        wheel = wheel or build_wheel(Path(tmp))
+        wheel = wheel or build_wheel(Path(tmp), source)
         output = ""
         for argv in install_commands(machine, wheel):
             result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,

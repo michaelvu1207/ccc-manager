@@ -95,9 +95,26 @@ def unload_commands(role: str, platform: str | None = None) -> list[list[str]]:
     return [["systemctl", "--user", "disable", "--now", f"ccc-sync-{role}.service"]]
 
 
+def user_bus_env() -> dict:
+    """Env for `systemctl --user` from a bare ssh session.
+
+    Non-interactive ssh sessions often lack XDG_RUNTIME_DIR and the user bus
+    address; systemctl --user then fails. Fill them in when the runtime dir
+    exists (it does once the user has a session or linger is enabled).
+    """
+    env = dict(os.environ)
+    runtime = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    if not env.get("XDG_RUNTIME_DIR") and Path(runtime).is_dir():
+        env["XDG_RUNTIME_DIR"] = runtime
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and Path(runtime, "bus").exists():
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime}/bus"
+    return env
+
+
 def _run(commands: list[list[str]], tolerate_first: bool = False) -> None:
+    env = user_bus_env() if commands and commands[0][0] == "systemctl" else None
     for i, argv in enumerate(commands):
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=env)
         if result.returncode and not (tolerate_first and i == 0):
             raise OSError(f"{' '.join(argv[:3])} failed: {result.stderr.strip()[:200]}")
 

@@ -663,6 +663,8 @@ def _add_machines_parser(sub) -> None:
     p = msub.add_parser("install", help="Install this CCC on a machine (wheel over ssh + uv tool install)")
     p.add_argument("machine")
     p.add_argument("--wheel", help="Use this wheel instead of building one")
+    p.add_argument("--source", help="Build the wheel from this ccc-manager checkout "
+                                    "(default: $CCC_SOURCE_DIR, or the running checkout)")
     p.set_defaults(func=cmd_machines_install)
 
 
@@ -671,7 +673,8 @@ def cmd_machines_install(args: argparse.Namespace) -> int:
 
     machine = _resolve_machine(args.machine)
     try:
-        version = remote_install.install(machine, Path(args.wheel) if args.wheel else None)
+        version = remote_install.install(machine, Path(args.wheel) if args.wheel else None,
+                                         source=Path(args.source) if args.source else None)
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
         return _report(1, str(exc))
     return _report(0, f"{machine.name}: {version or 'installed'}")
@@ -805,6 +808,12 @@ def cmd_sync_once(args: argparse.Namespace) -> int:
     return 1 if summary["errors"] else 0
 
 
+def cmd_sync_login(args: argparse.Namespace) -> int:
+    from . import sync_login
+
+    return sync_login.main_login(args.email, args.wait)
+
+
 def cmd_sync_status(args: argparse.Namespace) -> int:
     from . import sync_agent, sync_config
 
@@ -909,6 +918,10 @@ def _add_sync_parser(sub) -> None:
     p = ssub.add_parser("once", help="One agent round now")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_sync_once)
+    p = ssub.add_parser("login", help="Log in to a Claude account here and share it with every machine")
+    p.add_argument("--email", help="Pre-fill the email on the login page (also: re-login this account)")
+    p.add_argument("--wait", type=float, default=120.0, help="Seconds to watch machines pick it up")
+    p.set_defaults(func=cmd_sync_login)
     p = ssub.add_parser("status", help="Hub, shared logins, and each machine's last sync")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_sync_status)
