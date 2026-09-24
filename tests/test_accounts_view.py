@@ -133,3 +133,29 @@ class AssignWithFakes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SyncState(unittest.TestCase):
+    def test_chip_sync_state(self):
+        key = "claude|a@x.com|o1"
+        sync = {"enabled": True,
+                "accounts": {key: {"shared": True, "generation": 5},
+                             "claude|b@x.com|": {"shared": False, "generation": 2}},
+                "machines": {"seablue": {"generations": {key: 5}, "last_sync": 10},
+                             "box": {"generations": {key: 4}, "last_sync": 9}}}
+        view = accounts_view.build([
+            machine("local", [acct("1", "a@x.com", org="o1", active=True), acct("2", "b@x.com")], local=True),
+            machine("box", [acct("1", "a@x.com", org="o1")]),
+            machine("gpu", []),
+        ], sync=sync, sync_names={"local": "seablue", "box": "box", "gpu": "gpu"})
+        a = next(x for x in view["accounts"] if x["email"] == "a@x.com")
+        self.assertTrue(a["shared"])
+        self.assertEqual(a["hub_generation"], 5)
+        self.assertEqual(a["machines"]["local"]["sync"]["state"], "in_sync")
+        self.assertEqual(a["machines"]["box"]["sync"]["state"], "behind")
+        self.assertEqual(a["machines"]["gpu"]["sync"]["state"], "no_agent")
+        b = next(x for x in view["accounts"] if x["email"] == "b@x.com")
+        self.assertFalse(b["shared"])
+        self.assertNotIn("sync", b["machines"]["local"])
+        off = accounts_view.build([machine("local", [acct("1", "a@x.com")], local=True)])
+        self.assertIsNone(off["accounts"][0]["shared"])

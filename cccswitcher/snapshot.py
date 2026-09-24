@@ -278,8 +278,55 @@ def build_snapshot(refresh: bool = True, machine_ids: list[str] | None = None,
     if local and include_costs:
         result["costs"] = costs.seven_day_report(account_labels=_cost_labels(*providers))
     result["machines"] = [machine_payload(s) for s in states]
-    result["accounts_view"] = accounts_view.build([machine_payload(s) for s in view_states])
+    sync = sync_status(refresh)
+    result["sync"] = sync
+    names = {m.id: (sync.get("machine") if m.local else (m.alias or m.id)) or m.id for m in all_machines}
+    result["accounts_view"] = accounts_view.build([machine_payload(s) for s in view_states],
+                                                  sync=sync, sync_names=names)
     return result
+
+
+def sync_status(refresh: bool) -> dict:
+    """Shared-login sync summary for the app (no secrets, no tokens).
+
+    A live refresh asks the hub (4 s timeout) and caches the answer; cached
+    reads never touch the network.
+    """
+    from . import cache, sync_agent, sync_config
+
+    config = sync_config.load()
+    if not sync_config.enabled(config):
+        return {"enabled": False}
+    local = sync_agent.load_state()
+    out = {
+        "enabled": True, "hub_url": config.get("hub_url"), "machine": config.get("machine") or "",
+        "role": config.get("role") or "agent",
+        "local": {"last_sync": local.get("last_sync"), "errors": local.get("last_errors") or []},
+        "reachable": None, "error": "", "checked_at": None, "hub": {}, "accounts": {}, "machines": {},
+    }
+    status, checked_at = None, None
+    if refresh:
+        try:
+            client = sync_agent.client_from_config(config)
+            client.timeout = 4
+            status = client.status()
+            checked_at = time.time()
+            cache.write("sync-status", status)
+            out["reachable"] = True
+        except sync_agent.HubError as exc:
+            out["reachable"], out["error"] = False, str(exc)
+    if status is None:
+        cached = cache.read("sync-status")
+        if cached and isinstance(cached[0], dict):
+            status, checked_at = cached[0], time.time() - cached[1]
+    if status:
+        out["checked_at"] = checked_at
+        out["hub"] = status.get("hub") or {}
+        out["accounts"] = {a["key"]: {k: a.get(k) for k in (
+            "email", "shared", "generation", "expires_at", "updated_at", "source",
+            "last_refresh_at", "refresh_error")} for a in status.get("accounts", [])}
+        out["machines"] = status.get("machines") or {}
+    return out
 
 
 def dump_snapshot(refresh: bool = True, machine_ids: list[str] | None = None,

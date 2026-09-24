@@ -59,7 +59,23 @@ def _sort_key(entry: dict) -> tuple:
     return (0 if entry["active_on"] else 1, entry["provider"] != "claude", usage, entry["email"])
 
 
-def build(machines: list[dict]) -> dict:
+def _sync_for(sync: dict | None, sync_names: dict[str, str], machine_id: str, key: str) -> dict | None:
+    """This machine's copy of a shared login vs the hub's generation."""
+    if not sync or not sync.get("enabled"):
+        return None
+    hub_account = (sync.get("accounts") or {}).get(key)
+    if not hub_account or not hub_account.get("shared", True):
+        return None
+    report = (sync.get("machines") or {}).get(sync_names.get(machine_id, machine_id))
+    if report is None:
+        return {"state": "no_agent", "hub_generation": hub_account.get("generation", 0)}
+    generation = (report.get("generations") or {}).get(key)
+    in_sync = generation == hub_account.get("generation", 0)
+    return {"state": "in_sync" if in_sync else "behind", "generation": generation,
+            "hub_generation": hub_account.get("generation", 0), "last_sync": report.get("last_sync")}
+
+
+def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, str] | None = None) -> dict:
     """Merge snapshot `machines` entries into the account-centric view.
 
     `machines` are snapshot machine payloads (see snapshot.machine_payload).
@@ -106,6 +122,9 @@ def build(machines: list[dict]) -> dict:
                 entry["disabled"] = bool(acct.get("disabled"))
             if not online:
                 entry["last_state"] = _state(acct, True) if m.get("has_data") else "unknown"
+            synced = _sync_for(sync, sync_names or {}, m["id"], "|".join(key))
+            if synced is not None:
+                entry["sync"] = synced
             per_machine[m["id"]] = entry
         stored_on = [mid for mid in records]
         disabled_on = [mid for mid, acct in records.items() if acct.get("disabled")]
@@ -130,6 +149,10 @@ def build(machines: list[dict]) -> dict:
             "active_on": [mid for mid, acct in records.items() if acct.get("active")],
             "stored_on": stored_on,
             "machines": per_machine,
+            # Shared-login sync: None = sync off / not a hub account.
+            "shared": _shared(sync, "|".join(key)),
+            "hub_generation": ((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("generation"),
+            "refresh_error": ((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("refresh_error", ""),
             # This Mac's 0.17 extras (Codex consumable resets), when present.
             "consumable_resets": next((r.get("consumable_resets") for r in records.values()
                                        if r.get("consumable_resets") is not None), None),
@@ -154,6 +177,15 @@ def build(machines: list[dict]) -> dict:
         ],
         "accounts": accounts,
     }
+
+
+def _shared(sync: dict | None, key: str) -> bool | None:
+    if not sync or not sync.get("enabled"):
+        return None
+    if not key.startswith("claude|"):
+        return None  # only Claude logins are shared
+    account = (sync.get("accounts") or {}).get(key)
+    return True if account is None else bool(account.get("shared", True))
 
 
 def find(view: dict, query: str, provider: str | None = None) -> list[dict]:
