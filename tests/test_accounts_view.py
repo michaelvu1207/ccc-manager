@@ -209,4 +209,6 @@ class SyncState(unittest.TestCase):
         a = accounts_view.build(machines_, sync=dead)["accounts"][0]
         self.assertEqual(a["machines"]["local"]["state"], "needs_login")
         self.assertEqual(a["machines"]["lap"]["state"], "needs_login")
+        self.assertTrue(a["needs_login"])
+        self.assertIn("hub cannot refresh", a["status_message"])
         self.assertFalse(a["usage_pending"])

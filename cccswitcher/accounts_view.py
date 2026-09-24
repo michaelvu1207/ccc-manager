@@ -183,9 +183,10 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
             "usage_stale": bool(best.get("usage_stale")) if has_usage else False,
             "usage_from": best_mid if has_usage else None,
             "usage_at": best.get("usage_at") if has_usage else None,
-            "status_message": "" if has_usage else next(
-                (a.get("status_message") for a in records.values() if a.get("status_message")), ""),
-            "needs_login": all(a.get("needs_login") for a in records.values()),
+            "status_message": "" if has_usage else (
+                "needs login: the hub cannot refresh this login" if hub_dead else next(
+                    (a.get("status_message") for a in records.values() if a.get("status_message")), "")),
+            "needs_login": hub_dead or all(a.get("needs_login") for a in records.values()),
             # A healthy shared login whose usage is not read yet (neutral).
             "usage_pending": not has_usage and not hub_dead
             and any(a.get("usage_pending") for a in records.values()),

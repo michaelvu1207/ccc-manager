@@ -57,19 +57,21 @@ struct MatrixHeader: View {
         .padding(.horizontal, MatrixLayout.rowInset)
     }
 
+    // A Menu would flatten the custom label into one "icon + title" line and
+    // truncate the name, so the header is a plain view: click refreshes that
+    // machine, right-click shows the machine menu.
     private func header(_ machine: ViewMachine) -> some View {
-        Menu {
-            Text(machine.name + (machine.online ? "" : " — offline"))
-            Button("Add a Claude account here…") { state.addAccount(machineID: machine.id) }
-                .disabled(!machine.online)
-            Button("Refresh") { Task { await state.refresh(machineID: machine.id) } }
-        } label: {
-            MatrixHeaderLabel(machine: machine, layout: layout,
-                              loading: state.loadingMachines.contains(machine.id))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .help("\(machine.name) — \(machine.online ? "online" : "offline")")
+        MatrixHeaderLabel(machine: machine, layout: layout,
+                          loading: state.loadingMachines.contains(machine.id))
+            .contentShape(Rectangle())
+            .onTapGesture { Task { await state.refresh(machineID: machine.id) } }
+            .contextMenu {
+                Text(machine.name + (machine.online ? "" : " — offline"))
+                Button("Add a Claude account here…") { state.addAccount(machineID: machine.id) }
+                    .disabled(!machine.online)
+                Button("Refresh") { Task { await state.refresh(machineID: machine.id) } }
+            }
+            .help("\(machine.name) — \(machine.online ? "online" : "offline") · click to refresh, right-click for more")
         .accessibilityLabel("\(machine.name), \(machine.online ? "online" : "offline")")
     }
 }
