@@ -109,10 +109,15 @@ def _claude_provider(refresh: bool) -> dict:
                 "active": a.active,
                 "disabled": a.disabled,
                 "status": "ok" if isinstance(a.usage, dict) else (
-                    "needs_login" if claude.needs_login(a) else "unavailable"),
+                    "needs_login" if claude.needs_login(a)
+                    else "pending" if claude.usage_pending(a) else "unavailable"),
                 "needs_login": claude.needs_login(a),
+                # Shared login, healthy: "usage pending" or "waiting for hub".
+                "usage_pending": claude.usage_pending(a),
+                "shared": a.shared,
                 "status_message": (
-                    a.usage if isinstance(a.usage, str) and not claude.needs_login(a) else ""
+                    (a.usage or claude.USAGE_PENDING) if claude.usage_pending(a)
+                    else a.usage if isinstance(a.usage, str) and not claude.needs_login(a) else ""
                 ),
                 "windows": _claude_windows(a.usage) + _model_windows([
                     {"model": item.get("name"), "pct": item.get("pct"),

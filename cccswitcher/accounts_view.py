@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import time
 
-# Per-machine states, as shown on the app's machine chips.
+# Per-machine states, as shown on the app's machine chips. PENDING: a healthy
+# shared login whose usage is not measured yet (neutral, not "needs login").
 ACTIVE, STORED, NEEDS_LOGIN, ABSENT, OFFLINE = "active", "stored", "needs_login", "absent", "offline"
+PENDING = "pending"
 
 
 def short_name(name: str) -> str:
@@ -50,7 +52,9 @@ def _state(acct: dict | None, online: bool) -> str:
         return ABSENT
     if acct.get("active"):
         return ACTIVE
-    return NEEDS_LOGIN if acct.get("needs_login") else STORED
+    if acct.get("needs_login"):
+        return NEEDS_LOGIN
+    return PENDING if acct.get("usage_pending") else STORED
 
 
 def _sort_key(entry: dict) -> tuple:
@@ -120,6 +124,8 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
                 entry["num"] = acct.get("num")
                 entry["query"] = acct.get("num") if group["provider"] == "claude" else acct.get("email")
                 entry["disabled"] = bool(acct.get("disabled"))
+                if acct.get("usage_pending") and acct.get("status_message"):
+                    entry["note"] = acct["status_message"]
             if not online:
                 entry["last_state"] = _state(acct, True) if m.get("has_data") else "unknown"
             synced = _sync_for(sync, sync_names or {}, m["id"], "|".join(key))

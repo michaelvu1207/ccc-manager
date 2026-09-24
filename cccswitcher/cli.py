@@ -355,7 +355,7 @@ def cmd_enable(args: argparse.Namespace) -> int:
     return cmd_disable(args, disabled=False)
 
 
-CHIP = {"active": "●", "stored": "○", "needs_login": "!", "absent": "+", "offline": "×"}
+CHIP = {"active": "●", "stored": "○", "pending": "◌", "needs_login": "!", "absent": "+", "offline": "×"}
 
 
 def _chip_text(machine: dict, entry: dict) -> str:
@@ -394,7 +394,8 @@ def cmd_accounts(args: argparse.Namespace) -> int:
             chips = [_chip_text(machine_by_id[mid], entry) for mid, entry in a["machines"].items()]
             print("    " + "   ".join(chips))
         print()
-    print(dim("  ● active  ○ stored (ccc assign to switch)  ! needs login  + not on that machine  × offline"))
+    print(dim("  ● active  ○ stored (ccc assign to switch)  ◌ shared, usage pending  ! needs login"
+              "  + not on that machine  × offline"))
     return 0
 
 
@@ -412,7 +413,7 @@ def cmd_assign(args: argparse.Namespace) -> int:
         return _report(255, f"{machine.name} is offline")
     if state == "active":
         return _report(0, f"{account['email']} is already active on {machine.name}")
-    if state == "stored":
+    if state in ("stored", "pending"):  # pending: shared login, usage not read yet
         return _report(*actions.account_action(machine, provider, "switch", entry["query"]))
     if provider == "codex":
         hint = "ccc login codex" if machine.local else "codex login (on that machine)"

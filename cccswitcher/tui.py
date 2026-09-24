@@ -114,7 +114,7 @@ def _local_state(machine: machines.Machine, refresh: bool) -> remote.MachineStat
     )
 
 
-CHIPS = {"active": "●", "stored": "○", "needs_login": "!", "absent": "+", "offline": "×"}
+CHIPS = {"active": "●", "stored": "○", "pending": "◌", "needs_login": "!", "absent": "+", "offline": "×"}
 
 
 class App:
@@ -275,7 +275,7 @@ class App:
                 return
         if state == "active":
             self._say(f"{account['email']} is already active on {machine.name}")
-        elif state == "stored":
+        elif state in ("stored", "pending"):
             self._say(f"switching {machine.name}…")
             rc, message = actions.account_action(machine, provider, "switch", entry["query"])
             self._say(message)
@@ -518,7 +518,8 @@ class App:
             for ci, m in enumerate(ms):
                 entry = a["machines"].get(m["id"], {"state": "offline"})
                 state = entry["state"]
-                role = {"active": "good", "stored": "text", "needs_login": "danger"}.get(state, "muted")
+                role = {"active": "good", "stored": "text", "pending": "text",
+                        "needs_login": "danger"}.get(state, "muted")
                 text = f"[{CHIPS[state]} {m['short_name']}{' ⊘' if entry.get('disabled') else ''}]"
                 attr = theme.attr(role, bold=state == "active")
                 if selected and ci == min(self.chip, len(ms) - 1):
