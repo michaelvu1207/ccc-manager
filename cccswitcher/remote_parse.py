@@ -197,11 +197,13 @@ def parse_ccc_snapshot(payload: object) -> list[dict]:
 
 
 def render_window(window: dict) -> dict:
-    """Snapshot form: id, pct_used, resets_in (recomputed from resets_at)."""
+    """Snapshot form: id, pct_used, resets_in (recomputed from resets_at), resets_at."""
     resets_in = window.get("resets_in", "")
-    if window.get("resets_at"):
-        resets_in = fmt_countdown(window["resets_at"], style=window.get("style", "dh"))
-    return {"id": window["id"], "pct_used": window.get("pct_used"), "resets_in": resets_in}
+    resets_at = _epoch(window.get("resets_at"))
+    if resets_at:
+        resets_in = fmt_countdown(resets_at, style=window.get("style", "dh"))
+    return {"id": window["id"], "pct_used": window.get("pct_used"), "resets_in": resets_in,
+            "resets_at": resets_at}
 
 
 def render_provider(provider: dict) -> dict:

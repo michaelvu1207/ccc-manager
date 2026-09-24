@@ -132,6 +132,36 @@ class AssignWithFakes(unittest.TestCase):
         self.assertIn("accounts", view)
 
 
+class Order(unittest.TestCase):
+    def _windows(self, weekly_at):
+        return [{"id": "5h", "pct_used": 10, "resets_in": "1h", "resets_at": weekly_at - 50_000},
+                {"id": "wk", "pct_used": 20, "resets_in": "", "resets_at": weekly_at}]
+
+    def test_soonest_weekly_reset_first_and_stable(self):
+        def build(active):
+            late = acct("1", "late@x.com", active=active == "late")
+            soon = acct("2", "soon@x.com", active=active == "soon")
+            mid = acct("3", "mid@x.com")
+            late["windows"], soon["windows"], mid["windows"] = (
+                self._windows(3_000_000_000), self._windows(1_000_000_000), self._windows(2_000_000_000))
+            late["pct"] = soon["pct"] = 0
+            codex = acct("c", "c@x.com", provider="codex")
+            codex["windows"] = self._windows(900_000_000)
+            nousage = acct("4", "a-none@x.com", needs_login=True)
+            return accounts_view.build([machine("local", [late, nousage, mid, soon], [codex], local=True)])
+        order = [a["email"] for a in build("late")["accounts"]]
+        self.assertEqual(order, ["soon@x.com", "mid@x.com", "late@x.com", "a-none@x.com", "c@x.com"])
+        # Switching the active account or new usage numbers do not move rows.
+        self.assertEqual([a["email"] for a in build("soon")["accounts"]], order)
+
+    def test_reset_time_from_text_when_no_timestamp(self):
+        now = 1_000.0
+        self.assertEqual(accounts_view.weekly_reset(
+            [{"id": "5h", "resets_in": "2h 9m"}, {"id": "wk", "resets_in": "4d 3h"}], now), now + 4 * 86400 + 3 * 3600)
+        self.assertEqual(accounts_view.weekly_reset([{"id": "wk", "resets_in": "now"}], now), now)
+        self.assertIsNone(accounts_view.weekly_reset([{"id": "wk", "resets_in": ""}], now))
+
+
 class ShortNames(unittest.TestCase):
     def test_derived_column_labels(self):
         shown = [dict(machine("local", local=True), platform="Darwin", display_name="Michael's MacBook Pro"),

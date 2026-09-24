@@ -87,10 +87,36 @@ def _state(acct: dict | None, online: bool) -> str:
     return PENDING if acct.get("usage_pending") else STORED
 
 
+_UNIT_S = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+
+
+def _reset_epoch(window: dict, now: float) -> float | None:
+    """Absolute reset time of a usage window (resets_at, else parsed resets_in)."""
+    at = window.get("resets_at")
+    if isinstance(at, (int, float)) and at > 0:
+        return float(at)
+    text = (window.get("resets_in") or "").strip()
+    if text == "now":
+        return now
+    parts = re.findall(r"(\d+)\s*([dhms])", text)
+    return now + sum(int(n) * _UNIT_S[u] for n, u in parts) if parts else None
+
+
+def weekly_reset(windows: list[dict], now: float | None = None) -> float | None:
+    """When the account's weekly quota resets (its unused quota expires)."""
+    now = time.time() if now is None else now
+    weekly = [w for w in windows if w.get("id") in ("wk", "7d")]
+    times = [t for t in (_reset_epoch(w, now) for w in (weekly or windows)) if t is not None]
+    return min(times) if times else None
+
+
 def _sort_key(entry: dict) -> tuple:
-    pcts = [w.get("pct_used") for w in entry["windows"] if w.get("pct_used") is not None]
-    usage = max(pcts) if pcts else 1000.0
-    return (0 if entry["active_on"] else 1, entry["provider"] != "claude", usage, entry["email"])
+    """Claude, then Codex; within each, the weekly quota that resets soonest
+    first (use it before it expires). Reset times are fixed, so rows do not
+    move on refresh or when an account is switched; accounts without usage
+    go last, then by email."""
+    reset = entry.get("weekly_reset")
+    return (entry["provider"] != "claude", reset is None, reset or 0.0, entry["email"].lower(), entry["key"])
 
 
 def _sync_for(sync: dict | None, sync_names: dict[str, str], machine_id: str, key: str) -> dict | None:
@@ -180,6 +206,7 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
             "org_name": next((a.get("org_name") for a in records.values() if a.get("org_name")), ""),
             "plan": next((a.get("plan") for a in records.values() if a.get("plan")), ""),
             "windows": (best.get("windows") or []) if has_usage else [],
+            "weekly_reset": weekly_reset(best.get("windows") or []) if has_usage else None,
             "usage_stale": bool(best.get("usage_stale")) if has_usage else False,
             "usage_from": best_mid if has_usage else None,
             "usage_at": best.get("usage_at") if has_usage else None,

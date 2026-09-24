@@ -465,7 +465,8 @@ The native app renders `ccc snapshot`; it never reads tokens itself. The
 Accounts tab is the account matrix (see the table above): a header with one
 column per machine (platform icon, online dot, short name; click it to add an
 account there or refresh it), then one line per account (Claude, then Codex;
-active somewhere first, then lowest usage) with a marker under each machine
+the weekly quota that resets soonest first — the order stays put on refresh
+and on switch) with a marker under each machine
 and its usage bars below. With 4 machines the columns are 46 pt wide in the
 360 pt popover; with more, they shrink to icon-only headers before anything
 scrolls. A marker's context menu offers Switch here, Re-login, Disable/Enable

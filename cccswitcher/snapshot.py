@@ -42,6 +42,7 @@ def _claude_windows(usage: dict | str | None) -> list[dict]:
                     "id": window_id,
                     "pct_used": win.get("pct"),
                     "resets_in": win.get("countdown", ""),
+                    "resets_at": remote_parse._epoch(win.get("resets_at")),
                 }
             )
     return windows
@@ -56,6 +57,7 @@ def _model_windows(limits: list[dict] | None) -> list[dict]:
             "id": lim["model"].lower(),
             "pct_used": lim.get("pct"),
             "resets_in": fmt_countdown(lim.get("resets_at"), style="dh"),
+            "resets_at": remote_parse._epoch(lim.get("resets_at")),
         }
         for lim in limits
         if lim.get("model")
@@ -85,6 +87,7 @@ def _codex_windows(usage: dict | None) -> list[dict]:
                     "id": window_id,
                     "pct_used": win.get("used_percent"),
                     "resets_in": fmt_countdown(win.get("resets_at"), style=style),
+                    "resets_at": remote_parse._epoch(win.get("resets_at")),
                 }
             )
     windows.sort(key=lambda w: w["id"] != "5h")
