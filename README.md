@@ -181,24 +181,61 @@ Data sources:
 ## Accounts across machines
 
 `ccc accounts` (and the menu-bar app's Accounts tab, and the TUI's default
-view) lists each account once. Accounts are matched across machines by
-provider + email (+ organization for Claude). Each shows the freshest usage
-any machine reported ("as of 5m ago from path-pc"), and one state per machine:
+view) is a matrix: one column per machine, one line per account. Accounts are
+matched across machines by provider + email (+ organization for Claude). Each
+line has one marker under each machine column, and the freshest usage any
+machine reported on the line below ("last known … from path-pc" only when
+that usage is stale):
 
-| Chip | Meaning | Click |
+| Marker | Meaning | Click |
 |---|---|---|
 | ● filled | active login on that machine | — |
 | ○ outline | stored there, not active | switch that machine to it |
+| ◌ dotted | shared login, usage not read yet | switch that machine to it |
 | ! orange | stored, but its login is dead | re-login on that machine |
-| + dashed | not on that machine | open Terminal there: `/login`, then save it |
+| + faint | not on that machine | open Terminal there: `/login`, then save it |
 | × dimmed | machine offline (last known state) | — |
 
+The account line itself does nothing on click: only a marker switches a
+machine. In the app, a marker with an orange outline is a shared login whose
+copy on that machine is behind the hub (or has no agent report); the tooltip
+has the details. Column labels are short names: "Mac" for this Mac, a name
+without a prefix it shares with another machine ("simforge-a100" → "a100"),
+else its first part ("path-brower" → "path"). Set your own with
+`ccc machines short <machine> <name>` or on the app's Machines screen.
+
 ```sh
-ccc accounts                           # account-centric table with machine chips
+ccc accounts                           # the matrix: a header row of machines, one marker per column
 ccc accounts --no-refresh --json       # the same view as JSON (also `accounts_view` in ccc snapshot)
 ccc assign alice@example.com --machine path-pc   # switch if stored there, else start a login there
 ccc disable alice@example.com --everywhere       # every machine that stores it
+ccc remove 3 --machine path-pc                   # one machine (asks first; --yes to skip)
+ccc delete alice@example.com [--provider claude] [--yes]   # every machine, and the sync hub
 ```
+
+**Delete an account everywhere** (`ccc delete`, or "Delete account…" in the
+app's `…` menu). CCC first shows where the account is active, for example
+"Claude Code on path-brower and simforge-a100 is using this account; it keeps
+working until it switches, but CCC stops syncing it", and asks. Then:
+
+- With sync (Claude): the hub drops its copy and keeps a *tombstone*. Every
+  0.22 agent removes its machine's copy (slot, backup credential, config
+  backup) once. The live Claude Code login is never touched: where the account
+  is active, it keeps working, it is never uploaded again, and its slot goes
+  after Claude Code switches away. The hub refuses uploads of the account
+  ("deleted on hub") until you log in to it again with
+  `ccc sync login --email <email>` ("Re-login" in the app), which brings it back
+  on every machine. This Mac applies the deletion at once.
+- Machines without a 0.22 agent (no sync, or an older CCC): the per-machine
+  remove (`cswap remove` over SSH, answered "y" only after your confirmation;
+  CCC's own engine on this Mac). An offline machine keeps its copy; remove it
+  later with `ccc remove … --machine`.
+
+**Re-login** (the app's `…` menu, or the small orange "Re-login" button when a
+machine needs a login): with sync, `ccc sync login --email <email>` in
+Terminal on this Mac — the hub replaces the login, and every machine gets it.
+Without sync, the per-machine re-login on the machine that needs it. Codex:
+the browser login on this Mac (`codex login` on other machines).
 
 **Without sync, credentials never move between machines.** Refresh tokens
 rotate, so an unmanaged copy would break the other copy (shared logins below
@@ -208,8 +245,9 @@ that machine with a fresh `/login`. A disabled state is per machine; an
 account shows "(disabled)" when every machine that stores it has it disabled,
 and "(disabled on N)" otherwise.
 
-In the TUI, ←/→ pick a machine chip on the selected account, Enter acts on
-it, and `m` switches to the machine-grouped view.
+In the TUI, ←/→ pick a machine column on the selected account, Enter acts on
+that marker (never on the account as a whole), and `m` switches to the
+machine-grouped view.
 
 ## Shared logins (sync)
 
@@ -257,7 +295,7 @@ has expired, it does not call the token endpoint and does not read usage; it
 pulls once from the hub (a read) and shows **waiting for hub** until a fresh
 copy arrives. After each pull that creates or updates a login, the agent
 reads that login's usage (usage API only, with the pulled access token). Until
-then the login shows **usage pending**: a neutral chip, not "needs login".
+then the login shows **usage pending**: a neutral marker, not "needs login".
 The agent pulls first at start and after wake; it checks the wall clock every
 10 s, so it sees a wake within seconds.
 
@@ -289,7 +327,7 @@ Code login is untouched. CCC then reads the new login (macOS: the Keychain
 item Claude Code keys by that profile directory; Linux: its
 `.credentials.json`), uploads it to the hub as a shared login — replacing an
 older copy, which is also how a dead account is re-logged (the orange "!"
-chip uses the same flow) — deletes the temporary profile and its Keychain
+marker and "Re-login" use the same flow) and how a deleted account comes back — deletes the temporary profile and its Keychain
 item, and shows each machine as it picks the login up.
 
 Why on the app's own machine: the macOS login Keychain is locked in SSH
@@ -307,14 +345,20 @@ also requires a Tailscale peer (100.64.0.0/10, fd7a:115c:a1e0::/48).
 | `GET /v1/health` | — | `{ok, service, version}` |
 | `GET /v1/credentials/wait?since=V&timeout=S` (0.21) | — | `200 {hub_version}` as soon as the hub's version is newer than `V`, else `304` after `S` (≤ 55) seconds |
 | `GET /v1/credentials` | header `X-CCC-Machine` | `{hub_version, accounts: [{key, provider, email, org_uuid, org_name, oauth_account, shared, generation, expires_at, credential?}]}` |
-| `POST /v1/credentials` | `{machine, key, provider, email, org_uuid, org_name, oauth_account, credential, replace?}` | `{adopted, generation, reason}` (`replace`: a fresh login replaces the hub copy) |
-| `POST /v1/share` | `{key, shared}` | `{key, shared}` |
+| `POST /v1/credentials` | `{machine, key, provider, email, org_uuid, org_name, oauth_account, credential, replace?, undelete?}` | `{adopted, generation, reason}` (`replace`: a fresh login replaces the hub copy; `replace` or `undelete` also clears a delete tombstone; otherwise a deleted key answers `reason: "deleted on hub"`) |
+| `POST /v1/share` | `{key, shared}` | `{key, shared}` (a deleted key stays deleted) |
+| `POST /v1/delete` (0.22) | `{key}` | `{key, deleted, existed}`: drops the hub copy, keeps a tombstone |
 | `POST /v1/report` | `{machine, version, generations, errors}` | `{ok}` |
 | `GET /v1/status` | — | `{hub, accounts (no tokens), machines}` |
 
 The hub's `hub_version` goes up on every adopt, refresh, and share change.
 0.21 only adds fields and one endpoint, so a 0.21 hub keeps serving 0.20
-agents unchanged. `key` is `claude|<email>|<organization uuid>`; `credential` is the exact JSON
+agents unchanged. 0.22 adds `/v1/delete` and a `deleted` flag. A deleted
+account is listed with `shared: false` and no credential, so 0.21 agents
+simply stop pulling and pushing it (they never offer a login the hub marks as
+not shared, so there is no retry loop); they do not remove their copies —
+`ccc delete` removes those over SSH. `ccc delete` needs a 0.22 hub; against a
+0.21 hub it stops before changing anything. `key` is `claude|<email>|<organization uuid>`; `credential` is the exact JSON
 Claude Code stores (`{"claudeAiOauth": {...}}`).
 
 ### Files
@@ -322,7 +366,8 @@ Claude Code stores (`{"claudeAiOauth": {...}}`).
 - `~/.config/ccc/sync.json` (0600): hub URL, shared secret, this machine's
   name; on the hub also bind address, port, `withhold_refresh_token`.
 - `~/.config/ccc/sync-state.json` (0600): this agent's last sync, generations,
-  and the hub's shared logins (`hub_shared`), which CCC never refreshes.
+  the hub's shared logins (`hub_shared`), which CCC never refreshes, and the
+  deletions it has applied (`deleted_done`).
 - CCC's usage cache: `ccc-usage.json` in the cswap data directory's `cache/`
   (0.21.1; cswap 0.26 owns `cache/usage.json`).
 - Hub store: `~/.local/share/ccc/hub/store.json` (0600).
@@ -390,6 +435,7 @@ default is this Mac plus every host in Starline's connection list.
 ccc machines                          # show the list (id, name, ssh alias, engine)
 ccc machines add gpu-box --name "GPU box" [--engine ccc]
 ccc machines rename path-pc "Path PC"
+ccc machines short simforge-a100 a100 # column label in the account views (no name: automatic)
 ccc machines disable simforge-a100    # keep it listed, stop polling
 ccc machines enable simforge-a100
 ccc machines engine gpu-box ccc       # auto | ccc | cswap
@@ -401,7 +447,7 @@ ccc snapshot --machine path-pc        # JSON for one machine (the app uses this)
 ccc switch claude 2 --machine path-pc
 ccc switch codex a@b.com --machine path-pc
 ccc disable 3 --machine path-pc
-ccc account remove claude 3 --machine path-pc   # asks first (--yes to skip)
+ccc remove 3 --machine path-pc       # asks first (--yes to skip); = ccc account remove claude 3 …
 ccc login claude 2 --machine path-pc  # ssh -t: switch, claude /login, switch back
 ccc add-account --machine path-pc     # ssh -t: claude /login, then cswap add
 ```
@@ -416,14 +462,17 @@ the login keychain for SSH sessions.
 ## macOS menu-bar app
 
 The native app renders `ccc snapshot`; it never reads tokens itself. The
-Accounts tab lists each account once (Claude, then Codex; active somewhere
-first, then lowest usage) with its usage bars and a wrapping row of machine
-chips (see the table above). A chip's context menu offers Switch here,
-Re-login, Disable/Enable on this machine, and Remove from this machine (with
-an inline confirmation); the row's `…` menu offers Disable/Enable everywhere
-and Copy email. A strip at the top shows each machine's status (click it to
-add an account there or refresh it). The server-rack button in the footer opens the Machines screen (add,
-rename, remove, pause polling, import from Starline). The Usage tab's compact
+Accounts tab is the account matrix (see the table above): a header with one
+column per machine (platform icon, online dot, short name; click it to add an
+account there or refresh it), then one line per account (Claude, then Codex;
+active somewhere first, then lowest usage) with a marker under each machine
+and its usage bars below. With 4 machines the columns are 46 pt wide in the
+360 pt popover; with more, they shrink to icon-only headers before anything
+scrolls. A marker's context menu offers Switch here, Re-login, Disable/Enable
+on this machine, and Remove from this machine (with an inline confirmation);
+the line's `…` menu offers Re-login, Disable/Enable everywhere, Copy email,
+and Delete account (with an inline red confirmation). The server-rack button in the footer opens the Machines screen (add,
+rename, set the short column name, remove, pause polling, import from Starline). The Usage tab's compact
 chart distinguishes Claude (orange) and Codex (blue), shows today/week totals,
 and expands to provider/account/model/token details.
 
