@@ -473,6 +473,35 @@ def cmd_account(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_remove(args: argparse.Namespace) -> int:
+    """`ccc remove ACCOUNT --machine M`: one machine (same as `account remove`)."""
+    args.action = "remove"
+    return cmd_account(args)
+
+
+def cmd_delete(args: argparse.Namespace) -> int:
+    """Delete an account on every machine (and on the sync hub)."""
+    from . import account_delete, snapshot, sync_agent
+
+    account = _pick_account(_view(), args.email, args.provider)
+    sync = snapshot.sync_status(refresh=True)  # current agent versions from the hub
+    fleet = machines.load()
+    the_plan = account_delete.plan(account, fleet, sync)
+    print(account_delete.describe(the_plan))
+    if not args.yes:
+        if not sys.stdin.isatty():
+            return _report(2, "refusing to delete without --yes (no terminal to confirm)")
+        if input("Delete it? [y/N] ").strip().lower() != "y":
+            return _report(1, "cancelled")
+    client = None
+    if the_plan["hub"]:
+        try:
+            client = sync_agent.client_from_config()
+        except sync_agent.HubError as exc:
+            return _report(1, str(exc))
+    return account_delete.execute(the_plan, fleet, client=client)
+
+
 def cmd_transfer(args: argparse.Namespace) -> int:
     try:
         path = Path(args.path)
@@ -1065,6 +1094,18 @@ def main(argv: list[str] | None = None) -> int:
                                 help="Do not ask (a remote machine asks unless --yes)")
     _add_machine_opt(account_remove)
     account_remove.set_defaults(func=cmd_account)
+    remove_parser = sub.add_parser("remove", help="Remove a stored account from ONE machine")
+    remove_parser.add_argument("query", metavar="ACCOUNT", help="Slot number or email")
+    remove_parser.add_argument("--provider", choices=["claude", "codex"], default="claude")
+    remove_parser.add_argument("--yes", action="store_true", help="Do not ask (a remote machine asks unless --yes)")
+    _add_machine_opt(remove_parser)
+    remove_parser.set_defaults(func=cmd_remove)
+    delete_parser = sub.add_parser(
+        "delete", help="Delete an account on EVERY machine (and on the sync hub; `sync login` brings it back)")
+    delete_parser.add_argument("email", metavar="EMAIL")
+    delete_parser.add_argument("--provider", choices=["claude", "codex"])
+    delete_parser.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
+    delete_parser.set_defaults(func=cmd_delete)
     account_save = account_sub.add_parser(
         "save", help="Save the current Claude login into its matching existing account"
     )
