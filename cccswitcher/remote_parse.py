@@ -98,11 +98,15 @@ def parse_cswap_list(payload: object) -> dict:
             active = active_num is not None and str(active_num) == num
         alias = str(row.get("alias") or "")
         email = str(row.get("email") or "unknown")
+        usage_at = _epoch(row.get("usageFetchedAt") if live else row.get("lastGoodFetchedAt"))
         accounts.append({
             "num": num,
             "email": email,
             "label": email + (f" [{alias}]" if alias else ""),
             "alias": alias,
+            "org_uuid": str(row.get("organizationUuid") or ""),
+            "org_name": str(row.get("organizationName") or ""),
+            "usage_at": usage_at,
             "plan": "API key" if status == "api_key" else "",
             "active": bool(active),
             "disabled": bool(row.get("disabled", False)),
@@ -170,6 +174,9 @@ def codex_provider(rows: list[dict] | None, available: bool = True) -> dict:
             "email": email,
             "label": email + (f" [{alias}]" if alias else ""),
             "alias": alias,
+            "org_uuid": "",
+            "org_name": "",
+            "usage_at": _epoch(usage_at) if usage else None,
             "plan": str(row.get("plan") or "").replace("prolite", "Pro Lite").capitalize(),
             "active": bool(row.get("active")),
             "disabled": False,

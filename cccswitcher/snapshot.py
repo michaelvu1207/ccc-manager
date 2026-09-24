@@ -23,7 +23,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from . import claude, codex, costs, machines, remote, remote_parse
+from . import accounts_view, claude, codex, costs, machines, remote, remote_parse
 from .actions import USAGE_STALE_SECONDS
 from .render import fmt_countdown
 
@@ -92,7 +92,7 @@ def _codex_windows(usage: dict | None) -> list[dict]:
 
 
 def _claude_provider(refresh: bool) -> dict:
-    accounts, _ = claude.load_accounts(refresh)
+    accounts, usage_ts = claude.load_accounts(refresh)
     return {
         "id": "claude",
         "available": claude.cswap_available() or bool(accounts),
@@ -102,6 +102,9 @@ def _claude_provider(refresh: bool) -> dict:
                 "email": a.email,
                 "label": a.email,
                 "alias": "",
+                "org_uuid": a.org_uuid,
+                "org_name": a.org_name,
+                "usage_at": usage_ts if isinstance(a.usage, dict) else None,
                 "plan": "API key" if a.kind == "api_key" else "",
                 "active": a.active,
                 "disabled": a.disabled,
@@ -136,6 +139,9 @@ def _codex_provider(refresh: bool) -> dict:
                 "email": a.email,
                 "label": a.email + (f" [{a.alias}]" if a.alias else ""),
                 "alias": a.alias,
+                "org_uuid": "",
+                "org_name": "",
+                "usage_at": a.usage_at if a.usage else None,
                 "plan": a.plan,
                 "active": a.active,
                 "disabled": False,
@@ -247,6 +253,23 @@ def build_snapshot(refresh: bool = True, machine_ids: list[str] | None = None,
             states.append(remote_states[remotes.index(m)])
     remote.mark_duplicates(states, all_machines)
 
+    # The account-centric view always covers every enabled machine; machines
+    # not refreshed in this call contribute their cached state.
+    by_id = {s.machine.id: s for s in states}
+    view_states = []
+    for m in (m for m in all_machines if m.enabled):
+        if m.id in by_id:
+            view_states.append(by_id[m.id])
+        elif m.local:
+            view_states.append(remote.MachineState(
+                machine=m, online=True, platform=_platform(),
+                fingerprint=remote.local_fingerprint(), providers=_local_providers(False),
+                has_data=True, stale=True,
+            ))
+        else:
+            view_states.append(remote.cached_state(m))
+    remote.mark_duplicates(view_states, all_machines)
+
     result = {
         "version": SCHEMA_VERSION,
         "generated_at": time.time(),
@@ -255,6 +278,7 @@ def build_snapshot(refresh: bool = True, machine_ids: list[str] | None = None,
     if local and include_costs:
         result["costs"] = costs.seven_day_report(account_labels=_cost_labels(*providers))
     result["machines"] = [machine_payload(s) for s in states]
+    result["accounts_view"] = accounts_view.build([machine_payload(s) for s in view_states])
     return result
 
 
