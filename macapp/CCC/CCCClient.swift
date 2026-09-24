@@ -128,13 +128,15 @@ actor CCCClient {
 
     /// Delete an account on every machine (and on the sync hub). The UI has
     /// already asked for confirmation, hence `--yes`.
-    func deleteAccount(email: String, provider: String) async throws {
-        _ = try await runCCC(arguments: Self.deleteArguments(email: email, provider: provider),
+    /// `key` is the account key (provider|email|org): exact even when one
+    /// email has accounts in two organizations.
+    func deleteAccount(key: String, provider: String) async throws {
+        _ = try await runCCC(arguments: Self.deleteArguments(key: key, provider: provider),
                              timeout: 240, key: "delete")
     }
 
-    static func deleteArguments(email: String, provider: String) -> [String] {
-        ["delete", "--provider", provider, "--yes", "--", email]
+    static func deleteArguments(key: String, provider: String) -> [String] {
+        ["delete", "--provider", provider, "--yes", "--", key]
     }
 
     func saveCurrentClaudeLogin(num: String) async throws {

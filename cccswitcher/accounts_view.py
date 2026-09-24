@@ -241,8 +241,12 @@ def _shared(sync: dict | None, key: str) -> bool | None:
 
 
 def find(view: dict, query: str, provider: str | None = None) -> list[dict]:
-    """Accounts matching an email (exact, then substring) or alias/label."""
+    """Accounts matching an account key (provider|email|org), an email
+    (exact, then substring) or an alias. A key picks one of two accounts
+    with the same email in different organizations."""
     q = query.strip().lower()
     pool = [a for a in view["accounts"] if provider in (None, a["provider"])]
+    if q.count("|") == 2:
+        return [a for a in pool if a["key"].lower() == q]
     exact = [a for a in pool if q in (a["email"].lower(), (a["alias"] or "").lower())]
     return exact or [a for a in pool if q in a["email"].lower()]

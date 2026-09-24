@@ -222,6 +222,16 @@ class DeletePlan(unittest.TestCase):
         self.assertFalse(the_plan["hub"])  # only Claude logins are on the hub
         self.assertEqual(the_plan["steps"][0]["how"], "unsupported")
 
+    def test_same_email_in_two_organizations_needs_the_key(self):
+        view = accounts_view.build([machine("box", [acct("2", EMAIL, org="old-org", needs_login=True),
+                                                    acct("7", EMAIL, org=ORG)])])
+        with mock.patch.object(cli, "_view", return_value=view):
+            with self.assertRaises(SystemExit) as err:
+                cli._pick_account(view, EMAIL, "claude")
+            self.assertIn(f"claude|{EMAIL}|old-org", str(err.exception))
+            picked = cli._pick_account(view, f"claude|{EMAIL}|old-org", None)
+        self.assertEqual((picked["key"], picked["machines"]["box"]["num"]), (f"claude|{EMAIL}|old-org", "2"))
+
     def test_deleted_hub_account_has_no_share_toggle(self):
         sync = {"enabled": True, "accounts": {KEY: {"shared": False, "deleted": True, "generation": 3}}}
         view = accounts_view.build([machine("box", [acct("4", EMAIL, org=ORG, active=True)])], sync=sync)

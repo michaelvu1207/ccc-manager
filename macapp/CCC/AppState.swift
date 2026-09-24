@@ -456,7 +456,7 @@ final class AppState: ObservableObject {
         pendingDelete = account.key
         defer { pendingDelete = nil }
         do {
-            try await client.deleteAccount(email: account.email, provider: account.provider)
+            try await client.deleteAccount(key: account.key, provider: account.provider)
         } catch {
             errorMessage = "Delete \(account.email): \(error.localizedDescription)"
             return

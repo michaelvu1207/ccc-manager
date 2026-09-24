@@ -160,8 +160,8 @@ final class AccountMatrixTests: XCTestCase {
                        + "it keeps working until it switches.")
         let idle = try account(email: "b@x.com", states: ["local": "stored"])
         XCTAssertNil(AppState.deleteWarning(account: idle, name: { $0 }, syncing: true))
-        XCTAssertEqual(CCCClient.deleteArguments(email: "a@x.com", provider: "claude"),
-                       ["delete", "--provider", "claude", "--yes", "--", "a@x.com"])
+        XCTAssertEqual(CCCClient.deleteArguments(key: "claude|a@x.com|o", provider: "claude"),
+                       ["delete", "--provider", "claude", "--yes", "--", "claude|a@x.com|o"])
     }
 
     func testShortNameAndHubDeletedDecode() throws {

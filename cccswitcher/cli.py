@@ -328,7 +328,9 @@ def _pick_account(view: dict, query: str, provider: str | None):
         raise SystemExit(f"ccc: no account matches {query!r} (see `ccc accounts`)")
     if len(matches) > 1:
         names = ", ".join(f"{a['provider']}:{a['email']}" for a in matches)
-        raise SystemExit(f"ccc: {query!r} matches several accounts ({names}); be more specific")
+        keys = "\n  ".join(a["key"] for a in matches)
+        raise SystemExit(f"ccc: {query!r} matches several accounts ({names}); "
+                         f"pass one account key instead:\n  {keys}")
     return matches[0]
 
 
@@ -1110,7 +1112,8 @@ def main(argv: list[str] | None = None) -> int:
     remove_parser.set_defaults(func=cmd_remove)
     delete_parser = sub.add_parser(
         "delete", help="Delete an account on EVERY machine (and on the sync hub; `sync login` brings it back)")
-    delete_parser.add_argument("email", metavar="EMAIL")
+    delete_parser.add_argument("email", metavar="EMAIL",
+                               help="Email, or the account key provider|email|org when one email has two organizations")
     delete_parser.add_argument("--provider", choices=["claude", "codex"])
     delete_parser.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
     delete_parser.set_defaults(func=cmd_delete)
