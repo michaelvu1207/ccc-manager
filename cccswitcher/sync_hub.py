@@ -20,9 +20,19 @@ Protocol (JSON over HTTP; TLS comes from `tailscale serve`):
     POST /v1/credentials   bearer   {machine, key, provider, email, org_uuid, org_name,
                                      oauth_account, credential, replace?}
                                     (replace=true: a fresh login replaces the
-                                    hub copy even if not later-expiring)
+                                    hub copy even if not later-expiring; it
+                                    is also a deliberate login, so it clears
+                                    a delete tombstone, like undelete=true)
                                     -> {adopted, generation, reason}
     POST /v1/share         bearer   {key, shared}            -> {key, shared}
+    POST /v1/delete        bearer   {key}  (0.22)            -> {key, deleted, existed}
+                                    Drops the hub copy and keeps a tombstone:
+                                    the key is listed with shared=false,
+                                    deleted=true and no credential, so agents
+                                    (0.21 too) stop pulling and pushing it and
+                                    0.22 agents remove their copies. Uploads
+                                    of the key are rejected ("deleted on hub")
+                                    until an explicit `ccc sync login` for it.
     POST /v1/report        bearer   {machine, version, generations, errors} -> {ok}
     GET  /v1/status        bearer   -> {hub, accounts (no tokens), machines}
 
@@ -177,6 +187,7 @@ class HubStore:
             "source": entry.get("source", ""),
             "last_refresh_at": entry.get("last_refresh_at"),
             "refresh_error": entry.get("refresh_error", ""),
+            "deleted": bool(entry.get("deleted")),
         }
 
     def offer(self, payload: dict) -> dict:
@@ -195,6 +206,16 @@ class HubStore:
                 "provider": provider, "email": payload.get("email", ""),
                 "org_uuid": payload.get("org_uuid", ""), "generation": 0, "shared": True,
             })
+            if entry.get("deleted"):
+                # Only a deliberate login (`ccc sync login`: replace/undelete)
+                # brings a deleted account back; agents' uploads are refused.
+                if not (payload.get("undelete") or payload.get("replace")):
+                    return {"adopted": False, "generation": entry.get("generation", 0),
+                            "reason": "deleted on hub", "deleted": True}
+                entry.pop("deleted", None)
+                entry.pop("deleted_at", None)
+                entry["shared"] = True
+                entry.pop("credential", None)  # the new login is adopted below
             if not entry.get("shared", True):
                 return {"adopted": False, "generation": entry.get("generation", 0), "reason": "not shared"}
             if payload.get("org_name"):
@@ -222,6 +243,8 @@ class HubStore:
                 "provider": key.split("|")[0], "email": key.split("|")[1] if "|" in key else "",
                 "org_uuid": key.split("|")[2] if key.count("|") >= 2 else "", "generation": 0,
             })
+            if entry.get("deleted"):
+                return {"key": key, "shared": False, "deleted": True}  # only a login brings it back
             changed = entry.get("shared", True) != bool(shared) or (not shared and "credential" in entry)
             entry["shared"] = bool(shared)
             if not shared:
@@ -230,6 +253,30 @@ class HubStore:
             if changed:
                 self._bump(data)
             return {"key": key, "shared": entry["shared"]}
+
+    def delete(self, key: str) -> dict:
+        """Forget an account's login and remember that it was deleted.
+
+        The tombstone keeps the key listed (shared=false, deleted=true, no
+        credential, a new generation), so every agent learns about it, and
+        makes `offer` refuse the key until a deliberate login (undelete).
+        """
+        provider, _, rest = key.partition("|")
+        email, _, org = rest.partition("|")
+        with self._txn() as data:
+            existed = key in data["accounts"] and not data["accounts"][key].get("deleted")
+            entry = data["accounts"].setdefault(key, {
+                "provider": provider, "email": email, "org_uuid": org, "generation": 0})
+            if entry.get("deleted"):
+                return {"key": key, "deleted": True, "existed": False}
+            entry.pop("credential", None)
+            entry["shared"] = False
+            entry["deleted"] = True
+            entry["deleted_at"] = self.clock()
+            entry["refresh_error"] = ""
+            entry["generation"] = int(entry.get("generation", 0)) + 1
+            self._bump(data)
+            return {"key": key, "deleted": True, "existed": existed}
 
     def report(self, payload: dict) -> None:
         machine = str(payload.get("machine") or "")
@@ -417,6 +464,12 @@ def make_handler(store: HubStore, secret: str, hub_machine: str, withhold: bool,
                     self._send(400, {"error": "key must be provider|email|org"})
                     return
                 self._send(200, store.set_shared(key, bool(body.get("shared"))))
+            elif path == "/v1/delete":
+                key = str(body.get("key") or "")
+                if key.count("|") != 2 or not key.split("|")[1]:
+                    self._send(400, {"error": "key must be provider|email|org"})
+                    return
+                self._send(200, store.delete(key))
             elif path == "/v1/report":
                 store.report(body)
                 self._send(200, {"ok": True})

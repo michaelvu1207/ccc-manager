@@ -18,6 +18,13 @@ Each round (`run_once`, also `ccc sync once`):
          hub adopts only strictly newer credentials.
 3. REPORT generations + errors, for `ccc sync status` and the app.
 
+DELETED (0.22): a login deleted on the hub (`ccc delete`) is listed with
+deleted=true. The agent removes this machine's copy (slot, backup
+credential, config backup) once per deletion, but never while it is the
+live Claude Code login here: that one keeps working, is neither pulled nor
+pushed, and its slot goes on the first round after Claude Code switches
+away. Only `ccc sync login` for the account brings it back.
+
 The live credential is always the freshest copy of the active account, so it
 is what gets pushed for that account.
 """
@@ -32,7 +39,7 @@ import urllib.error
 import urllib.request
 
 from . import __version__, claude, claude_locks, sync_config
-from .storage import atomic_write_json, read_json
+from .storage import atomic_write_json, file_lock, read_json
 
 HTTP_TIMEOUT = 10
 
@@ -110,6 +117,10 @@ class HubClient:
     def share(self, key: str, shared: bool) -> dict:
         return self._request("POST", "/v1/share", {"key": key, "shared": shared})
 
+    def delete(self, key: str) -> dict:
+        """Delete an account on the hub (0.22 hub; a 0.21 hub answers 404)."""
+        return self._request("POST", "/v1/delete", {"key": key})
+
     def report(self, generations: dict, errors: list[str]) -> None:
         self._request("POST", "/v1/report", {
             "machine": self.machine, "version": __version__,
@@ -172,6 +183,51 @@ def local_fingerprint() -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
+def _apply_deletions(by_key: dict[str, dict], slots: dict[str, dict], active_key: str | None,
+                     state: dict, summary: dict) -> None:
+    """Remove this machine's copies of logins deleted on the hub.
+
+    Once per deletion (state["deleted_done"] holds the tombstone generation
+    handled), so a copy re-added here by hand later is left alone. The live
+    Claude Code login is never touched: its slot stays until it is no
+    longer active.
+    """
+    deleted = {k: a for k, a in by_key.items() if a.get("deleted")}
+    done = state.setdefault("deleted_done", {})
+    for key in [k for k in done if k not in deleted]:
+        done.pop(key)  # brought back by a login: forget the old deletion
+    for key, remote in deleted.items():
+        state["accounts"].pop(key, None)  # no longer a synced login here
+        generation = int(remote.get("generation") or 0)
+        if done.get(key) == generation:
+            continue
+        slot = slots.get(key)
+        if slot is None:
+            done[key] = generation
+            continue
+        if key == active_key:
+            summary["kept_active"].append(key)  # Claude Code uses it; retry after it switches
+            continue
+        try:
+            with file_lock(claude.backup_dir() / ".ccc.lock"):
+                claude.remove_account(slot["num"])
+            slots.pop(key, None)
+            summary["removed"].append(key)
+            done[key] = generation
+        except (OSError, ValueError) as exc:
+            summary["errors"].append(f"{remote.get('email', key)}: {sync_config.redact(exc)}")
+
+
+def apply_hub_deletions(client: HubClient) -> dict:
+    """Only the DELETED step of a round (used by `ccc delete` on this machine)."""
+    summary = {"removed": [], "kept_active": [], "errors": []}
+    state = load_state()
+    by_key = {a["key"]: a for a in client.credentials()}
+    _apply_deletions(by_key, _local_slots(), _active_key(), state, summary)
+    save_state(state)
+    return summary
+
+
 def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEOUT_S,
              push: bool = True, report: str = "auto", fetch_usage: bool = True) -> dict:
     """One pull(/push/report) round. Returns a summary (no secrets).
@@ -182,7 +238,7 @@ def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEO
     """
     summary = {"pulled": [], "created": [], "pushed": [], "active_updated": False,
                "skipped_busy": False, "errors": [], "hub_version": None, "reported": False,
-               "usage_updated": []}
+               "usage_updated": [], "removed": [], "kept_active": []}
     state = load_state()
     hub_accounts = client.credentials()
     summary["hub_version"] = getattr(client, "last_hub_version", None)
@@ -194,6 +250,9 @@ def run_once(client: HubClient, lock_timeout: float = claude_locks.DEFAULT_TIMEO
     save_state(state)
     slots = _local_slots()
     active_key = _active_key()
+
+    # ---- DELETED on the hub (0.22) ----
+    _apply_deletions(by_key, slots, active_key, state, summary)
 
     # ---- PULL ----
     for key, remote in by_key.items():

@@ -68,7 +68,7 @@ def _sync_for(sync: dict | None, sync_names: dict[str, str], machine_id: str, ke
     if not sync or not sync.get("enabled"):
         return None
     hub_account = (sync.get("accounts") or {}).get(key)
-    if not hub_account or not hub_account.get("shared", True):
+    if not hub_account or not hub_account.get("shared", True) or hub_account.get("deleted"):
         return None
     report = (sync.get("machines") or {}).get(sync_names.get(machine_id, machine_id))
     if report is None:
@@ -168,6 +168,9 @@ def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, 
             "shared": _shared(sync, "|".join(key)),
             "hub_generation": ((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("generation"),
             "refresh_error": ((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("refresh_error", ""),
+            # Deleted on the hub (0.22): copies left on machines the agents
+            # could not clean (the live login, older agents, no agent).
+            "hub_deleted": bool(((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("deleted")),
             # This Mac's 0.17 extras (Codex consumable resets), when present.
             "consumable_resets": next((r.get("consumable_resets") for r in records.values()
                                        if r.get("consumable_resets") is not None), None),
@@ -200,6 +203,8 @@ def _shared(sync: dict | None, key: str) -> bool | None:
     if not key.startswith("claude|"):
         return None  # only Claude logins are shared
     account = (sync.get("accounts") or {}).get(key)
+    if account is not None and account.get("deleted"):
+        return None  # deleted on the hub: no share toggle, only a login brings it back
     return True if account is None else bool(account.get("shared", True))
 
 

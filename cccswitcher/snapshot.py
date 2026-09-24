@@ -329,7 +329,7 @@ def sync_status(refresh: bool) -> dict:
         out["hub"] = status.get("hub") or {}
         out["accounts"] = {a["key"]: {k: a.get(k) for k in (
             "email", "shared", "generation", "expires_at", "updated_at", "source",
-            "last_refresh_at", "refresh_error")} for a in status.get("accounts", [])}
+            "last_refresh_at", "refresh_error", "deleted")} for a in status.get("accounts", [])}
         out["machines"] = status.get("machines") or {}
     return out
 

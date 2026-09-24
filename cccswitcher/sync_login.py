@@ -10,7 +10,8 @@ active login is untouched, read the new credential (macOS: the Keychain item
 Claude Code keys by that dir; Linux: <dir>/.credentials.json) and the
 oauthAccount identity (<dir>/.claude.json), upload it to the hub as a shared
 login (replacing any older copy — this is also how a dead account is
-re-logged), then delete the temporary login so the hub holds the only
+re-logged, and how an account deleted with `ccc delete` comes back), then
+delete the temporary login so the hub holds the only
 refreshable original. Tokens are never printed.
 """
 
@@ -130,7 +131,9 @@ def login(client: HubClient, email: str | None = None, claude_bin: str = "claude
             "provider": "claude", "email": who,
             "org_uuid": identity.get("organizationUuid") or "",
             "org_name": identity.get("organizationName") or "",
-            "oauth_account": identity, "credential": credential, "replace": True,
+            # A deliberate login: replaces the hub copy and brings back an
+            # account deleted with `ccc delete` (clears the hub's tombstone).
+            "oauth_account": identity, "credential": credential, "replace": True, "undelete": True,
         }
         try:
             answer = client.offer(payload)
