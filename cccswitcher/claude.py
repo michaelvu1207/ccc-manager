@@ -89,7 +89,14 @@ def cswap_available() -> bool:
 
 
 def _use_keychain() -> bool:
+    if os.environ.get("CCC_FAKE_KEYCHAIN_DIR"):
+        return True  # tests: file-backed stand-in for the macOS Keychain
     return sys.platform == "darwin" and os.environ.get("CCC_DISABLE_KEYCHAIN") != "1"
+
+
+def _fake_keychain_path(service: str, account: str) -> Path:
+    name = base64.urlsafe_b64encode(f"{service}\0{account}".encode()).decode()
+    return Path(os.environ["CCC_FAKE_KEYCHAIN_DIR"]) / name
 
 
 def _security(args: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
@@ -100,6 +107,11 @@ def _security(args: list[str], *, input_text: str | None = None) -> subprocess.C
 
 
 def _keychain_get(service: str, account: str) -> str:
+    if os.environ.get("CCC_FAKE_KEYCHAIN_DIR"):
+        try:
+            return _fake_keychain_path(service, account).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
     result = _security(["find-generic-password", "-a", account, "-w", "-s", service])
     if result.returncode == 0:
         return result.stdout.removesuffix("\n")
@@ -109,6 +121,9 @@ def _keychain_get(service: str, account: str) -> str:
 
 
 def _keychain_set(service: str, account: str, value: str) -> None:
+    if os.environ.get("CCC_FAKE_KEYCHAIN_DIR"):
+        atomic_write_text(_fake_keychain_path(service, account), value)
+        return
     # Hex prevents quoting bugs and keeps the plaintext secret out of argv.
     result = _security([
         "add-generic-password", "-U", "-a", account, "-s", service,
@@ -119,6 +134,12 @@ def _keychain_set(service: str, account: str, value: str) -> None:
 
 
 def _keychain_delete(service: str, account: str) -> None:
+    if os.environ.get("CCC_FAKE_KEYCHAIN_DIR"):
+        try:
+            _fake_keychain_path(service, account).unlink()
+        except FileNotFoundError:
+            pass
+        return
     result = _security(["delete-generic-password", "-a", account, "-s", service])
     if result.returncode not in (0, 44):
         raise OSError(f"macOS Keychain delete failed ({result.returncode})")
@@ -348,7 +369,7 @@ def _oauth(value: str) -> dict | None:
         return None
 
 
-def _refresh_credentials(value: str) -> str | None:
+def _refresh_credentials(value: str, token_url: str = TOKEN_URL) -> str | None:
     try:
         root = json.loads(value)
         oauth = root.get("claudeAiOauth")
@@ -356,7 +377,7 @@ def _refresh_credentials(value: str) -> str | None:
         if not refresh_token:
             return None
         req = urllib.request.Request(
-            TOKEN_URL,
+            token_url,
             data=json.dumps({
                 "grant_type": "refresh_token", "refresh_token": refresh_token,
                 "client_id": OAUTH_CLIENT_ID,
@@ -796,3 +817,84 @@ def fetch_model_limits(refresh: bool = True, nums: list[str] | None = None) -> d
             ]
     cache.write(MODEL_LIMITS_CACHE, merged)
     return merged
+
+
+# ---------- slot helpers for credential sync (sync_agent.py) ----------
+
+def slots() -> list[dict]:
+    """Stored accounts: [{num, email, org_uuid, org_name, kind, disabled}]."""
+    registry = _registry()
+    out = []
+    for raw in registry.get("sequence", []):
+        info = registry.get("accounts", {}).get(str(raw), {})
+        out.append({
+            "num": str(raw), "email": info.get("email", "unknown"),
+            "org_uuid": info.get("organizationUuid") or "",
+            "org_name": info.get("organizationName") or "",
+            "kind": info.get("kind") or "oauth", "disabled": bool(info.get("disabled")),
+        })
+    return out
+
+
+def read_slot_credential(num: str, email: str) -> str:
+    return _read_backup_credentials(num, email)
+
+
+def write_slot_credential(num: str, email: str, value: str) -> None:
+    with file_lock(backup_dir() / ".ccc.lock"):
+        _write_backup_credentials(num, email, value)
+
+
+def slot_oauth_account(num: str, email: str) -> dict:
+    """The non-secret oauthAccount identity saved with a slot's config."""
+    config = read_json(_config_backup_path(num, email), {}) or {}
+    identity = config.get("oauthAccount")
+    return identity if isinstance(identity, dict) else {}
+
+
+def create_slot(email: str, org_uuid: str, org_name: str, oauth_account: dict, value: str) -> str:
+    """Add a slot for an account first logged in on another machine.
+
+    Same files cswap 0.26 writes: registry entry, backup credential, and a
+    config backup (this machine's ~/.claude.json with the account's
+    oauthAccount identity) so a later switch works like a local login.
+    """
+    with file_lock(backup_dir() / ".ccc.lock"):
+        registry = _registry()
+        existing = next((str(n) for n in registry["sequence"]
+                         if registry["accounts"].get(str(n), {}).get("email") == email
+                         and (registry["accounts"].get(str(n), {}).get("organizationUuid") or "") == org_uuid),
+                        None)
+        if existing:
+            return existing
+        num = str(max([int(n) for n in registry["sequence"]] or [0]) + 1)
+        _write_backup_credentials(num, email, value)
+        config = read_json(global_config_path(), {}) or {}
+        identity = dict(oauth_account or {})
+        identity.setdefault("emailAddress", email)
+        identity.setdefault("organizationUuid", org_uuid)
+        identity.setdefault("organizationName", org_name)
+        config["oauthAccount"] = identity
+        atomic_write_text(_config_backup_path(num, email), json.dumps(config, indent=2) + "\n")
+        registry["accounts"][num] = {
+            "email": email, "uuid": identity.get("accountUuid") or "",
+            "organizationUuid": org_uuid, "organizationName": org_name,
+            "added": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "source": "ccc-sync",
+        }
+        registry["sequence"] = sorted({int(n) for n in registry["sequence"]} | {int(num)})
+        atomic_write_json(sequence_file(), registry)
+        return num
+
+
+def active_identity() -> tuple[str, str] | None:
+    return _active_identity()
+
+
+def read_active_credential() -> str:
+    return _active_credentials()
+
+
+def write_active_credential(value: str) -> None:
+    """Replace the live Claude Code credential. Callers hold claude_locks."""
+    _write_active_credentials(value)
