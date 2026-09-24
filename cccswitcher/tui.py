@@ -1,12 +1,12 @@
 """Interactive curses TUI — the default `ccc` view.
 
-Accounts are grouped by machine (this machine first, then SSH hosts from
-`ccc machines`). Arrow keys move between accounts; Enter activates the
-selected account on its machine, or launches a login when its credentials
-are dead. `l` re-authenticates the selection while restoring the machine's
-current active account, `d` toggles cswap disable, `a` adds a Claude account
-on the selected machine, `r` refreshes every machine, `q` quits. Machines
-that are offline keep their last known accounts, dimmed.
+Default view: one row per account (Claude, then Codex) with its usage and a
+line of machine chips (● active, ○ stored, ! needs login, + not on that
+machine, × offline). ↑/↓ pick an account, ←/→ pick a machine chip, Enter acts
+on that chip: switch that machine to its stored login, re-login, or start a
+fresh login there. `l` re-logs in, `d` toggles disable on that machine, `m`
+switches to the machine-grouped view, `r` refreshes, `q` quits. Credentials
+never move between machines.
 """
 
 from __future__ import annotations
@@ -16,11 +16,13 @@ import locale
 import threading
 from dataclasses import dataclass
 
-from . import actions, machines, monthly, remote, remote_parse, snapshot, theme
+from . import accounts_view, actions, machines, monthly, remote, remote_parse, snapshot, theme
 from .render import fmt_age, fmt_duration
 
 HINTS = [
     ("↑/↓", "move"),
+    ("←/→", "machine"),
+    ("m", "view"),
     ("enter", "switch / login"),
     ("l", "re-login"),
     ("d", "disable"),
@@ -112,11 +114,18 @@ def _local_state(machine: machines.Machine, refresh: bool) -> remote.MachineStat
     )
 
 
+CHIPS = {"active": "●", "stored": "○", "needs_login": "!", "absent": "+", "offline": "×"}
+
+
 class App:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.states: list[remote.MachineState] = []
         self.groups: list[list[Entry]] = []
+        # Account-centric view (default): one row per account, machine chips.
+        self.mode = "accounts"  # | "machines"
+        self.view: dict = {"machines": [], "accounts": []}
+        self.chip = 0  # selected machine chip in accounts mode
         self.stats: dict[str, monthly.ProviderStats | None] = {}
         self.status = "loading..."
         self.refreshing = False
@@ -132,9 +141,11 @@ class App:
         all_machines = machines.load()
         remote.mark_duplicates(states, all_machines)
         groups = build_entries(states)
+        view = accounts_view.build([snapshot.machine_payload(s) for s in states])
         with self.lock:
             self.states = states
             self.groups = groups
+            self.view = view
             self.dirty = True
 
     def _load(self, refresh: bool, then_refresh: bool = False, force_stats: bool = False) -> None:
@@ -207,8 +218,74 @@ class App:
             target=self._load, args=(refresh, then_refresh, force_stats), daemon=True
         ).start()
 
-    def entries(self) -> list[Entry]:
+    def entries(self) -> list:
+        if self.mode == "accounts":
+            return self.account_rows()
         return [e for group in self.groups for e in group]
+
+    def account_rows(self) -> list[dict]:
+        rows = self.view["accounts"]
+        return [a for a in rows if a["provider"] == "claude"] + [a for a in rows if a["provider"] == "codex"]
+
+    # ---------- account-centric actions ----------
+
+    def _chip_machine(self) -> tuple[dict, machines.Machine] | None:
+        ms = self.view["machines"]
+        if not ms:
+            return None
+        info = ms[min(self.chip, len(ms) - 1)]
+        machine = machines.find(machines.load(), info["id"])
+        return (info, machine) if machine else None
+
+    def _chip_action(self, stdscr, account: dict, kind: str = "enter") -> None:
+        picked = self._chip_machine()
+        if picked is None:
+            return
+        info, machine = picked
+        entry = account["machines"].get(info["id"], {"state": "offline"})
+        state, provider = entry["state"], account["provider"]
+        if state == "offline":
+            self._say(f"{machine.name} is offline")
+            return
+        if kind == "disable":
+            if provider != "claude" or state == "absent":
+                self._say("only a stored Claude account can be disabled")
+                return
+            action = "enable" if entry.get("disabled") else "disable"
+            rc, message = actions.account_action(machine, "claude", action, entry["num"])
+            self._say(message)
+            if rc == 0:
+                self.refresh_async(refresh=False)
+            return
+        if kind == "login" or state == "needs_login":
+            if state == "absent":
+                kind = "enter"
+            elif provider == "codex" and not machine.local:
+                self._say(f"codex login opens a browser; run it on {machine.name}")
+                return
+            elif provider == "codex":
+                self._run_in_terminal(stdscr, lambda: actions.login_codex(stay=True))
+                return
+            elif machine.local:
+                self._run_in_terminal(stdscr, lambda: actions.login_claude(entry["num"], stay=True))
+                return
+            else:
+                self._run_in_terminal(
+                    stdscr, lambda: actions.login_claude_remote(machine, entry["num"], True))
+                return
+        if state == "active":
+            self._say(f"{account['email']} is already active on {machine.name}")
+        elif state == "stored":
+            self._say(f"switching {machine.name}…")
+            rc, message = actions.account_action(machine, provider, "switch", entry["query"])
+            self._say(message)
+            if rc == 0:
+                self.refresh_async(refresh=False)
+        elif provider == "claude":  # absent: fresh login there
+            actions.copy_to_clipboard(account["email"])
+            self._run_in_terminal(stdscr, lambda: actions.add_account(machine))
+        else:
+            self._say(f"sign in to Codex as {account['email']} on {machine.name} (codex login)")
 
     # ---------- actions ----------
 
@@ -347,7 +424,11 @@ class App:
             self._put(stdscr, midy + dy, tx, text, theme.attr(role, bold=bold))
 
     def _row_count(self) -> int:
-        """Lines the account panel needs: per machine a header, rows, notes."""
+        """Lines the account panel needs."""
+        if self.mode == "accounts":
+            rows = self.account_rows()
+            providers = {a["provider"] for a in rows}
+            return max(1, 2 * len(rows) + len(providers))
         rows = 0
         for state, group in zip(self.states, self.groups):
             rows += 1  # machine header
@@ -386,9 +467,72 @@ class App:
             segs.append(("  " + " · ".join(details), theme.attr("muted")))
         return segs
 
+    def _draw_account_view(self, stdscr, top, left, width, height):
+        """Account-centric panel: usage line + a line of machine chips."""
+        self._box(stdscr, top, left, width, height, "Accounts · all machines")
+        inner, right = left + 2, left + width - 2
+        rows = self.account_rows()
+        label_w = min(max((len(a["label"]) for a in rows), default=10), max(12, right - inner - 70))
+        y, bottom = top + 1, top + height - 1
+        if not rows:
+            self._put(stdscr, y, inner, "no accounts yet", theme.attr("muted"))
+            return
+        ms = self.view["machines"]
+        last = None
+        for idx, a in enumerate(rows):
+            if y >= bottom:
+                break
+            if a["provider"] != last:
+                self._put(stdscr, y, inner, a["provider"].upper(), theme.attr("muted", bold=True))
+                y += 1
+                last = a["provider"]
+            selected = idx == self.sel
+            self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ", theme.attr("accent", bold=True))
+            prole = "claude" if a["provider"] == "claude" else "codex"
+            name_attr = theme.attr(prole, bold=True) if selected else theme.attr(
+                "muted" if a["disabled"] else "text", bold=bool(a["active_on"]))
+            label = a["label"] if len(a["label"]) <= label_w else a["label"][: label_w - 1] + "…"
+            segs = [(theme.DOT + " ", theme.attr("good") if a["active_on"] else theme.attr("muted")),
+                    (f"{label:<{label_w}}  ", name_attr)]
+            if a["disabled"]:
+                segs.append(("disabled  ", theme.attr("muted")))
+            if a["needs_login"]:
+                segs += [(theme.WARN + " ", theme.attr("danger", bold=True)), ("needs login", theme.attr("danger"))]
+            else:
+                for raw in a["windows"]:
+                    w = remote_parse.render_window(raw)
+                    remaining = None if w["pct_used"] is None else 100 - w["pct_used"]
+                    bar_str, role = theme.bar(remaining)
+                    pct = f"{round(remaining):>3}%" if remaining is not None else "  ?"
+                    segs += [(f"{w['id']} ", theme.attr("label")), (bar_str + " ", theme.attr(role)),
+                             (pct, theme.attr(role, bold=True)), ("  ", 0)]
+                if a["usage_stale"]:
+                    segs.append(("(last known)", theme.attr("muted")))
+                elif not a["windows"]:
+                    segs.append((a["status_message"] or "usage unavailable", theme.attr("muted")))
+            self._segs_clip(stdscr, y, inner + 1, right, segs)
+            y += 1
+            if y >= bottom:
+                break
+            chips = []
+            for ci, m in enumerate(ms):
+                entry = a["machines"].get(m["id"], {"state": "offline"})
+                state = entry["state"]
+                role = {"active": "good", "stored": "text", "needs_login": "danger"}.get(state, "muted")
+                text = f"[{CHIPS[state]} {m['short_name']}{' ⊘' if entry.get('disabled') else ''}]"
+                attr = theme.attr(role, bold=state == "active")
+                if selected and ci == min(self.chip, len(ms) - 1):
+                    attr |= curses.A_REVERSE
+                chips += [(text, attr), (" ", 0)]
+            self._segs_clip(stdscr, y, inner + 3, right, chips)
+            y += 1
+
     def _draw_accounts(self, stdscr, top, left, width, height):
         """Top-right account switcher, grouped by machine."""
-        self._box(stdscr, top, left, width, height, "Accounts")
+        if self.mode == "accounts":
+            self._draw_account_view(stdscr, top, left, width, height)
+            return
+        self._box(stdscr, top, left, width, height, "Accounts · by machine")
         inner = left + 2
         right = left + width - 2
         avail = right - inner
@@ -653,6 +797,17 @@ class App:
             elif ch == ord("r"):
                 self.refresh_async(refresh=True, force_stats=True)
                 self.dirty = True
+            elif ch == ord("m"):
+                self.mode = "machines" if self.mode == "accounts" else "accounts"
+                self.sel = 0
+                self.dirty = True
+            elif ch in (curses.KEY_LEFT, curses.KEY_RIGHT) and self.mode == "accounts":
+                count = max(1, len(self.view["machines"]))
+                self.chip = (self.chip + (1 if ch == curses.KEY_RIGHT else -1)) % count
+                self.dirty = True
+            elif entries and self.mode == "accounts" and ch in (curses.KEY_ENTER, 10, 13, ord("l"), ord("d"), ord("a")):
+                kind = {ord("l"): "login", ord("d"): "disable"}.get(ch, "enter")
+                self._chip_action(stdscr, entries[min(self.sel, len(entries) - 1)], kind)
             elif entries and ch in (curses.KEY_ENTER, 10, 13):
                 self._activate(stdscr, entries[min(self.sel, len(entries) - 1)])
             elif entries and ch == ord("l"):
