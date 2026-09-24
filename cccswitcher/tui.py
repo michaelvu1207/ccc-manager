@@ -3,8 +3,8 @@
 Default view: one row per account (Claude, then Codex) with its usage and a
 line of machine chips (● active, ○ stored, ! needs login, + not on that
 machine, × offline). ↑/↓ pick an account, ←/→ pick a machine chip, Enter acts
-on that chip: switch that machine to its stored login, re-login, or start a
-fresh login there. `l` re-logs in, `d` toggles disable on that machine, `m`
+on that chip (never on the row as a whole): switch that machine to its stored
+login, re-login, or start a fresh login there. `l` re-logs in, `d` toggles disable on that machine, `m`
 switches to the machine-grouped view, `r` refreshes, `q` quits. Credentials
 never move between machines.
 """
@@ -492,8 +492,8 @@ class App:
             name_attr = theme.attr(prole, bold=True) if selected else theme.attr(
                 "muted" if a["disabled"] else "text", bold=bool(a["active_on"]))
             label = a["label"] if len(a["label"]) <= label_w else a["label"][: label_w - 1] + "…"
-            segs = [(theme.DOT + " ", theme.attr("good") if a["active_on"] else theme.attr("muted")),
-                    (f"{label:<{label_w}}  ", name_attr)]
+            # No leading "active" marker: the chips below say where it is active.
+            segs = [(f"{label:<{label_w}}  ", name_attr)]
             if a["disabled"]:
                 segs.append(("disabled  ", theme.attr("muted")))
             if a["needs_login"]:
@@ -525,7 +525,7 @@ class App:
                 if selected and ci == min(self.chip, len(ms) - 1):
                     attr |= curses.A_REVERSE
                 chips += [(text, attr), (" ", 0)]
-            self._segs_clip(stdscr, y, inner + 3, right, chips)
+            self._segs_clip(stdscr, y, inner + 1, right, chips)
             y += 1
 
     def _draw_accounts(self, stdscr, top, left, width, height):

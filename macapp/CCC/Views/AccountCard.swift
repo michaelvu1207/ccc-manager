@@ -20,13 +20,9 @@ struct AccountCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // No leading marker and no click: the chips say where the account
+            // is active, and a chip is the only way to switch a machine.
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: account.activeOn.isEmpty ? "circle" : "circle.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(account.activeOn.isEmpty ? Color.secondary : Color.accentColor)
-                    .padding(.top, 4)
-                    .help(activeHelp)
-
                 VStack(alignment: .leading, spacing: 3) {
                     titleLine
                     if !account.orgName.isEmpty && !account.orgName.hasPrefix(account.email) {
@@ -138,12 +134,6 @@ struct AccountCard: View {
         var text = account.usageStale ? "last known" : "as of"
         if let at = account.usageAt { text += " \(MachineSection.age(since: at)) ago" }
         return text + " from \(state.name(ofMachine: from))"
-    }
-
-    private var activeHelp: String {
-        account.activeOn.isEmpty
-            ? "Not the active login anywhere"
-            : "Active on " + account.activeOn.map { state.name(ofMachine: $0) }.joined(separator: ", ")
     }
 
     // MARK: Trailing controls (0.17 save / reset + row menu)
