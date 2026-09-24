@@ -10,11 +10,17 @@ never call the token endpoint.
 Protocol (JSON over HTTP; TLS comes from `tailscale serve`):
 
     GET  /v1/health        no auth  -> {ok, service, version}
-    GET  /v1/credentials   bearer   -> {accounts: [{key, provider, email, org_uuid,
+    GET  /v1/credentials/wait?since=<hub_version>&timeout=<s<=55>   (0.21+)
+                           bearer   -> 200 {hub_version} as soon as the hub's
+                                       version is newer than `since`, else
+                                       304 after the timeout (long-poll)
+    GET  /v1/credentials   bearer   -> {hub_version, accounts: [{key, provider, email, org_uuid,
                                         org_name, oauth_account, shared, generation,
                                         expires_at, credential?}]}
     POST /v1/credentials   bearer   {machine, key, provider, email, org_uuid, org_name,
-                                     oauth_account, credential}
+                                     oauth_account, credential, replace?}
+                                    (replace=true: a fresh login replaces the
+                                    hub copy even if not later-expiring)
                                     -> {adopted, generation, reason}
     POST /v1/share         bearer   {key, shared}            -> {key, shared}
     POST /v1/report        bearer   {machine, version, generations, errors} -> {ok}
@@ -61,7 +67,11 @@ def default_refresh(value: str) -> str | None:
 
 
 class HubStore:
-    """Accounts + machine reports in one 0600 JSON file, guarded by locks."""
+    """Accounts + machine reports in one 0600 JSON file, guarded by locks.
+
+    `hub_version` is bumped on every change agents must pull (adopt, refresh,
+    share); long-poll waiters sleep on `_changed` until it moves.
+    """
 
     def __init__(self, path: Path | None = None, refresh_fn: RefreshFn = default_refresh,
                  margin: float = sync_config.REFRESH_MARGIN_S, clock: Callable[[], float] = time.time):
@@ -70,6 +80,35 @@ class HubStore:
         self.margin = margin
         self.clock = clock
         self._lock = threading.RLock()
+        self._changed = threading.Condition(threading.Lock())
+        self._closing = False
+        self.version = int(self._load().get("hub_version", 0))
+
+    def _bump(self, data: dict) -> None:
+        data["hub_version"] = int(data.get("hub_version", 0)) + 1
+
+    def _published(self, data: dict) -> None:
+        version = int(data.get("hub_version", 0))
+        if version != self.version:
+            with self._changed:
+                self.version = version
+                self._changed.notify_all()
+
+    def wait_for_change(self, since: int, timeout: float) -> int | None:
+        """Block until hub_version > since (returns it) or timeout (None)."""
+        deadline = time.monotonic() + timeout
+        with self._changed:
+            while self.version <= since and not self._closing:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return None
+                self._changed.wait(left)
+            return self.version if self.version > since else None
+
+    def close(self) -> None:
+        with self._changed:
+            self._closing = True
+            self._changed.notify_all()
 
     # ----- persistence -----
 
@@ -99,6 +138,7 @@ class HubStore:
                 try:
                     if exc_type is None:
                         store._save(self_inner.data)
+                        store._published(self_inner.data)
                 finally:
                     self_inner._flock.__exit__(exc_type, *rest)
                     store._lock.release()
@@ -161,14 +201,20 @@ class HubStore:
                 entry["org_name"] = payload["org_name"]
             if payload.get("oauth_account"):
                 entry["oauth_account"] = payload["oauth_account"]
-            if not sync_config.is_newer(credential, entry.get("credential")):
+            current = entry.get("credential")
+            replace = bool(payload.get("replace")) and \
+                sync_config.token_id(credential) != sync_config.token_id(current)
+            if not replace and not sync_config.is_newer(credential, current):
                 return {"adopted": False, "generation": entry.get("generation", 0), "reason": "not newer"}
             entry["credential"] = credential
             entry["generation"] = int(entry.get("generation", 0)) + 1
             entry["updated_at"] = self.clock()
             entry["source"] = str(payload.get("machine") or "")
             entry["refresh_error"] = ""
-            return {"adopted": True, "generation": entry["generation"], "reason": "newer"}
+            entry["last_refresh_attempt"] = 0
+            self._bump(data)
+            return {"adopted": True, "generation": entry["generation"],
+                    "reason": "replaced" if replace else "newer"}
 
     def set_shared(self, key: str, shared: bool) -> dict:
         with self._txn() as data:
@@ -176,10 +222,13 @@ class HubStore:
                 "provider": key.split("|")[0], "email": key.split("|")[1] if "|" in key else "",
                 "org_uuid": key.split("|")[2] if key.count("|") >= 2 else "", "generation": 0,
             })
+            changed = entry.get("shared", True) != bool(shared) or (not shared and "credential" in entry)
             entry["shared"] = bool(shared)
             if not shared:
                 entry.pop("credential", None)  # stop holding a login we no longer sync
                 entry["generation"] = int(entry.get("generation", 0)) + 1
+            if changed:
+                self._bump(data)
             return {"key": key, "shared": entry["shared"]}
 
     def report(self, payload: dict) -> None:
@@ -198,6 +247,7 @@ class HubStore:
         with self._lock:
             data = self._load()
         return {
+            "hub_version": int(data.get("hub_version", 0)),
             "accounts": [self._public(k, e) for k, e in data["accounts"].items()],
             "machines": data["machines"],
         }
@@ -234,6 +284,8 @@ class HubStore:
                 entry["source"] = "hub-refresh"
                 entry["refresh_error"] = ""
                 refreshed.append(key)
+            if refreshed:
+                self._bump(data)
         return refreshed
 
 
@@ -251,7 +303,14 @@ def _peer_allowed(address: str, loopback_only: bool) -> bool:
     return any(ip in net for net in TAILNET)
 
 
-def make_handler(store: HubStore, secret: str, hub_machine: str, withhold: bool, loopback_only: bool):
+MAX_WAIT_S = 55.0
+
+
+def make_handler(store: HubStore, secret: str, hub_machine: str, withhold: bool, loopback_only: bool,
+                 counts: dict | None = None):
+    counts = counts if counts is not None else {}
+    count_lock = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "ccc-sync-hub"
         timeout = 15
@@ -297,16 +356,42 @@ def make_handler(store: HubStore, secret: str, hub_machine: str, withhold: bool,
                 return None
             return body
 
+        def _count(self, path: str) -> None:
+            with count_lock:
+                counts[f"{self.command} {path}"] = counts.get(f"{self.command} {path}", 0) + 1
+
+        def _query(self) -> dict:
+            from urllib.parse import parse_qs, urlsplit
+
+            return {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+
         def do_GET(self):
             path = self.path.split("?")[0]
+            self._count(path)
             if path == "/v1/health":
                 self._send(200, {"ok": True, "service": "ccc-sync-hub", "version": __version__})
                 return
             if not self._authorized():
                 return
-            if path == "/v1/credentials":
+            if path == "/v1/credentials/wait":
+                query = self._query()
+                try:
+                    since = int(query.get("since", "0"))
+                    timeout = min(MAX_WAIT_S, max(0.0, float(query.get("timeout", MAX_WAIT_S))))
+                except ValueError:
+                    self._send(400, {"error": "since/timeout must be numbers"})
+                    return
+                version = store.wait_for_change(since, timeout)
+                if version is None:
+                    self.send_response(304)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    self._send(200, {"hub_version": version})
+            elif path == "/v1/credentials":
                 machine = self.headers.get("X-CCC-Machine", "")
-                self._send(200, {"accounts": store.credentials(machine, withhold, hub_machine)})
+                self._send(200, {"hub_version": store.version,
+                                 "accounts": store.credentials(machine, withhold, hub_machine)})
             elif path == "/v1/status":
                 status = store.status()
                 status["hub"] = {"machine": hub_machine, "version": __version__,
@@ -323,6 +408,7 @@ def make_handler(store: HubStore, secret: str, hub_machine: str, withhold: bool,
             if body is None:
                 return
             path = self.path.split("?")[0]
+            self._count(path)
             if path == "/v1/credentials":
                 self._send(200, store.offer(body))
             elif path == "/v1/share":
@@ -350,8 +436,9 @@ class Hub:
         loopback_only = ipaddress.ip_address(host).is_loopback if host not in ("", "0.0.0.0") else False
         self.store = store
         self.interval = interval
+        self.counts: dict[str, int] = {}  # requests per "METHOD /path" (tests, status)
         self.server = ThreadingHTTPServer(
-            (host, port), make_handler(store, secret, hub_machine, withhold, loopback_only))
+            (host, port), make_handler(store, secret, hub_machine, withhold, loopback_only, self.counts))
         self.server.daemon_threads = True
         self._stop = threading.Event()
 
@@ -374,5 +461,6 @@ class Hub:
 
     def stop(self) -> None:
         self._stop.set()
+        self.store.close()  # wake long-poll waiters so shutdown is quick
         self.server.shutdown()
         self.server.server_close()
