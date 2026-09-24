@@ -9,14 +9,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import __version__, autoswitch, claude, codex, monthly
+from . import __version__, actions, autoswitch, claude, codex, machines, monthly, remote
 from .actions import (
     claude_usage_cells,
     codex_usage_cells,
     login_claude,
     login_codex,
 )
-from .render import bold, cyan, dim, fmt_duration, fmt_tokens
+from .render import bold, cyan, dim, fmt_age, fmt_duration, fmt_tokens, red
 
 
 def _print_account_line(
@@ -50,6 +50,9 @@ def cmd_list(args: argparse.Namespace) -> int:
             "codex": codex_stats_future.result(),
         }
 
+    if any(m.enabled and not m.local for m in machines.load()):
+        local = next(m for m in machines.load() if m.local)
+        print(bold(local.name) + dim("  (this machine)"))
     print(bold("Claude"))
     if claude_accounts:
         width = max(len(a.email) for a in claude_accounts)
@@ -77,6 +80,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         print(dim("  no accounts found (`ccc login codex`)"))
 
     print()
+    _print_remote_machines(args)
     _print_stats_summary(stats)
     return 0
 
@@ -177,10 +181,104 @@ def cmd_monthly(args: argparse.Namespace) -> int:
 def cmd_snapshot(args: argparse.Namespace) -> int:
     from . import snapshot
 
-    return snapshot.dump_snapshot(refresh=not args.no_refresh)
+    return snapshot.dump_snapshot(
+        refresh=not args.no_refresh, machine_ids=args.machine, include_costs=not args.no_costs
+    )
+
+
+def _resolve_machine(key: str | None) -> machines.Machine:
+    all_machines = machines.load()
+    if not key:
+        return next(m for m in all_machines if m.local)
+    machine = machines.find(all_machines, key)
+    if machine is None:
+        raise SystemExit(f"ccc: no machine matches {key!r} (see `ccc machines list`)")
+    return machine
+
+
+def _platform_name(platform: str) -> str:
+    return {"Darwin": "macOS", "Linux": "Linux"}.get(platform, platform or "?")
+
+
+def _remote_cells(account: dict) -> list[str]:
+    from .render import pct_left_colored
+
+    if account.get("needs_login"):
+        return [dim("needs login")]
+    cells = []
+    for window in account.get("windows") or []:
+        from .remote_parse import render_window
+
+        w = render_window(window)
+        suffix = dim(f" · resets in {w['resets_in']}") if w["resets_in"] else ""
+        cells.append(f"{w['id']} {pct_left_colored(w['pct_used'])}{suffix}")
+    if cells and account.get("usage_stale"):
+        cells.append(dim("(last known)"))
+    note = account.get("status_message") or ""
+    if note:
+        cells.append(dim(f"({note})"))
+    return cells or [dim("no usage data")]
+
+
+def _print_remote_machines(args: argparse.Namespace) -> None:
+    """Remote sections for `ccc list` (this Mac is printed above as before)."""
+    all_machines = machines.load()
+    wanted = getattr(args, "machine", None)
+    if wanted:
+        targets = [_resolve_machine(k) for k in wanted]
+    else:
+        targets = [m for m in all_machines if m.enabled]
+    targets = [m for m in targets if not m.local]
+    if not targets:
+        return
+    states = remote.probe_all(targets, refresh=not args.no_refresh)
+    remote.mark_duplicates(states, all_machines)
+    names = {m.id: ("this Mac" if m.local else m.name) for m in all_machines}
+    for state in states:
+        m = state.machine
+        status = cyan("online") if state.online else red("offline")
+        extra = [f"ssh {m.alias}"]
+        if state.platform:
+            extra.append(_platform_name(state.platform))
+        if state.stale and state.fetched_at:
+            extra.append(f"cached {fmt_age(state.fetched_at)} ago")
+        print(bold(m.name) + dim(f"  ({', '.join(extra)})") + f"  {status}")
+        if state.error:
+            print(dim(f"  {state.error}"))
+        if state.duplicate_of:
+            print(dim(f"  same machine as {names.get(state.duplicate_of, state.duplicate_of)}; hidden"))
+            print()
+            continue
+        for provider in state.providers:
+            rows = provider.get("accounts") or []
+            if not rows and provider["id"] == "codex":
+                continue
+            print("  " + bold(provider["id"].capitalize()))
+            if not rows:
+                print(dim(f"    {provider.get('error') or ('no accounts' if provider.get('available') else 'not installed')}"))
+                continue
+            labels = {r["num"]: r["label"] + (" (disabled)" if r.get("disabled") else "") for r in rows}
+            width = max(len(v) for v in labels.values())
+            for row in rows:
+                marker = cyan("*") if row.get("active") else " "
+                cells = ([dim(f"{row['plan']:<4}")] if row.get("plan") else []) + _remote_cells(row)
+                print(f"    {marker} {row['num']:>2}  {labels[row['num']]:<{width}}  {'  '.join(cells)}")
+        if not state.has_data and not state.error:
+            print(dim("  no data yet"))
+        print()
 
 
 def cmd_login(args: argparse.Namespace) -> int:
+    machine = _resolve_machine(args.machine)
+    if not machine.local:
+        if args.provider == "codex":
+            print("codex login opens a browser; run it on that machine", file=sys.stderr)
+            return 2
+        try:
+            return actions.login_claude_remote(machine, args.query, args.stay)
+        except actions.ActionError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     if args.provider == "codex":
         if args.query:
             print(dim("note: for codex the account is chosen in the browser; query ignored"))
@@ -188,7 +286,18 @@ def cmd_login(args: argparse.Namespace) -> int:
     return login_claude(args.query, stay=args.stay)
 
 
+def _report(rc: int, message: str) -> int:
+    if message:
+        print(message, file=sys.stderr if rc else sys.stdout)
+    return rc
+
+
 def cmd_switch(args: argparse.Namespace) -> int:
+    if args.machine:
+        machine = _resolve_machine(args.machine)
+        if not machine.local:
+            return _report(*actions.account_action(machine, args.provider, "switch", args.query,
+                                                   strategy=args.strategy))
     try:
         if args.provider == "claude":
             account = claude.switch_account(args.query, strategy=args.strategy)
@@ -204,7 +313,33 @@ def cmd_switch(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_disable(args: argparse.Namespace, disabled: bool = True) -> int:
+    machine = _resolve_machine(args.machine)
+    return _report(*actions.account_action(machine, "claude", "disable" if disabled else "enable", args.query))
+
+
+def cmd_enable(args: argparse.Namespace) -> int:
+    return cmd_disable(args, disabled=False)
+
+
+def cmd_add_account(args: argparse.Namespace) -> int:
+    return actions.add_account(_resolve_machine(args.machine))
+
+
 def cmd_account(args: argparse.Namespace) -> int:
+    machine = _resolve_machine(getattr(args, "machine", None))
+    if not machine.local:
+        if args.action != "remove":
+            print(f"`account {args.action}` works on this Mac only; use `ccc add-account --machine {machine.id}`",
+                  file=sys.stderr)
+            return 2
+        if not args.yes:
+            if not sys.stdin.isatty():
+                return _report(2, "refusing to remove without --yes (no terminal to confirm)")
+            answer = input(f"Permanently remove {args.provider} account {args.query} from {machine.name}? [y/N] ")
+            if answer.strip().lower() != "y":
+                return _report(1, "cancelled")
+        return _report(*actions.account_action(machine, args.provider, "remove", args.query))
     try:
         if args.action == "save":
             account = claude.save_current_account(args.query)
@@ -328,6 +463,101 @@ def cmd_auto(args: argparse.Namespace) -> int:
         time.sleep(settings.interval_seconds)
 
 
+# ---------- machines ----------
+
+def cmd_machines_list(args: argparse.Namespace) -> int:
+    all_machines = machines.load()
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "config_path": str(machines.config_path()),
+            "customized": machines.is_customized(),
+            "machines": [
+                {"id": m.id, "name": m.name, "alias": m.alias, "local": m.local,
+                 "enabled": m.enabled, "engine": m.engine, "resolved_engine": m.resolved_engine}
+                for m in all_machines
+            ],
+        }))
+        return 0
+    width = max(len(m.id) for m in all_machines)
+    for m in all_machines:
+        where = "this machine" if m.local else f"ssh {m.alias}"
+        state = "" if m.enabled else dim("  (paused)")
+        print(f"  {m.id:<{width}}  {m.name:<20}  {dim(where + ' · ' + m.resolved_engine)}{state}")
+    if not machines.is_customized():
+        print(dim(f"\n  default list (this machine + Starline); edits are saved to {machines.config_path()}"))
+    return 0
+
+
+def _edit_machines(fn) -> int:
+    all_machines = machines.load()
+    try:
+        message = fn(all_machines)
+    except machines.ConfigError as exc:
+        return _report(2, str(exc))
+    machines.save(all_machines)
+    return _report(0, message)
+
+
+def cmd_machines_add(args: argparse.Namespace) -> int:
+    def edit(ms):
+        m = machines.add(ms, args.alias, args.name, enabled=not args.disabled)
+        if args.engine:
+            machines.set_engine(ms, m.id, args.engine)
+        return f"added {m.name} (id {m.id}, ssh {m.alias}, engine {m.resolved_engine})"
+    return _edit_machines(edit)
+
+
+def cmd_machines_import(args: argparse.Namespace) -> int:
+    def edit(ms):
+        added = machines.merge_starline(ms)
+        return f"imported {len(added)} machine(s) from Starline" + (
+            ": " + ", ".join(m.name for m in added) if added else "")
+    return _edit_machines(edit)
+
+
+def _add_machines_parser(sub) -> None:
+    machines_parser = sub.add_parser("machines", help="Manage the machines CCC watches (this Mac + SSH hosts)")
+    machines_parser.set_defaults(func=cmd_machines_list)
+    msub = machines_parser.add_subparsers(dest="machines_command")
+    p = msub.add_parser("list", help="Show the machine list")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_machines_list)
+    p = msub.add_parser("add", help="Add an SSH host")
+    p.add_argument("alias", help="SSH alias (from ~/.ssh/config or a Tailscale host name)")
+    p.add_argument("--name", help="Display name (default: the alias)")
+    p.add_argument("--engine", choices=machines.ENGINES, help="auto (default): cswap over ssh")
+    p.add_argument("--disabled", action="store_true", help="Add without polling it")
+    p.set_defaults(func=cmd_machines_add)
+    p = msub.add_parser("remove", help="Remove a machine from the list")
+    p.add_argument("machine")
+    p.set_defaults(func=lambda a: _edit_machines(lambda ms: f"removed {machines.remove(ms, a.machine).name}"))
+    p = msub.add_parser("rename", help="Change a machine's display name")
+    p.add_argument("machine")
+    p.add_argument("name")
+    p.set_defaults(func=lambda a: _edit_machines(
+        lambda ms: f"renamed to {machines.rename(ms, a.machine, a.name).name}"))
+    p = msub.add_parser("enable", help="Poll this machine")
+    p.add_argument("machine")
+    p.set_defaults(func=lambda a: _edit_machines(
+        lambda ms: f"polling {machines.set_enabled(ms, a.machine, True).name}"))
+    p = msub.add_parser("disable", help="Stop polling this machine (keeps it in the list)")
+    p.add_argument("machine")
+    p.set_defaults(func=lambda a: _edit_machines(
+        lambda ms: f"stopped polling {machines.set_enabled(ms, a.machine, False).name}"))
+    p = msub.add_parser("engine", help="How CCC talks to a machine: auto | ccc | cswap")
+    p.add_argument("machine")
+    p.add_argument("engine", choices=machines.ENGINES)
+    p.set_defaults(func=lambda a: _edit_machines(
+        lambda ms: f"{a.machine}: engine {machines.set_engine(ms, a.machine, a.engine).resolved_engine}"))
+    p = msub.add_parser("import-starline", help="Add SSH hosts from Starline's connection list")
+    p.set_defaults(func=cmd_machines_import)
+
+
+def _add_machine_opt(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--machine", "-m", metavar="ID",
+                   help="Machine id, SSH alias, or name (default: this machine)")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ccc",
@@ -350,6 +580,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Force-recompute the cost stats (bypass the pricing/usage cache)",
     )
+    list_parser.add_argument("--machine", "-m", action="append", metavar="ID",
+                             help="Only these remote machines (repeatable); this Mac is always listed")
     list_parser.set_defaults(func=cmd_list)
 
     monthly_parser = sub.add_parser("monthly", help="Monthly token/cost table for both providers")
@@ -370,6 +602,10 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use cached usage instead of refreshing provider APIs",
     )
+    snapshot_parser.add_argument("--machine", "-m", action="append", metavar="ID",
+                                 help="Only this machine (repeatable)")
+    snapshot_parser.add_argument("--no-costs", action="store_true",
+                                 help="Skip the seven-day cost report")
     snapshot_parser.set_defaults(func=cmd_snapshot)
 
     login_parser = sub.add_parser(
@@ -387,13 +623,30 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Keep the freshly logged-in account active instead of restoring the previous one",
     )
+    _add_machine_opt(login_parser)
     login_parser.set_defaults(func=cmd_login)
 
     switch_parser = sub.add_parser("switch", help="Switch active account")
     switch_parser.add_argument("provider", choices=["claude", "codex"])
     switch_parser.add_argument("query", nargs="?", help="Slot number, email, or alias")
     switch_parser.add_argument("--strategy", choices=["next", "best", "next-available"], default="next")
+    _add_machine_opt(switch_parser)
     switch_parser.set_defaults(func=cmd_switch)
+
+    for name, func, help_text in (
+        ("disable", cmd_disable, "Hold a Claude account out of auto-rotation"),
+        ("enable", cmd_enable, "Return a disabled Claude account to rotation"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("query", metavar="ACCOUNT", help="Slot number or email")
+        _add_machine_opt(p)
+        p.set_defaults(func=func)
+
+    add_parser = sub.add_parser("add-account",
+                                help="Log in a new Claude account (claude /login) on a machine and store it")
+    _add_machine_opt(add_parser)
+    add_parser.set_defaults(func=cmd_add_account)
+    _add_machines_parser(sub)
 
     account_parser = sub.add_parser("account", help="Add or remove a stored account")
     account_sub = account_parser.add_subparsers(dest="action", required=True)
@@ -407,6 +660,9 @@ def main(argv: list[str] | None = None) -> int:
     account_remove = account_sub.add_parser("remove")
     account_remove.add_argument("provider", choices=["claude", "codex"])
     account_remove.add_argument("query")
+    account_remove.add_argument("--yes", action="store_true",
+                                help="Do not ask (a remote machine asks unless --yes)")
+    _add_machine_opt(account_remove)
     account_remove.set_defaults(func=cmd_account)
     account_save = account_sub.add_parser(
         "save", help="Save the current Claude login into its matching existing account"

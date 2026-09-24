@@ -76,6 +76,10 @@ def _codex_windows(usage: dict | None) -> list[dict]:
     for key, window_id, style in (("primary", "5h", "hm"), ("secondary", "wk", "dh")):
         win = usage.get(key)
         if win:
+            # Some plans put the weekly window in `primary`: label by length.
+            minutes = win.get("window_minutes")
+            if minutes:
+                window_id, style = ("5h", "hm") if minutes <= 24 * 60 else ("wk", "dh")
             windows.append(
                 {
                     "id": window_id,
@@ -83,6 +87,7 @@ def _codex_windows(usage: dict | None) -> list[dict]:
                     "resets_in": fmt_countdown(win.get("resets_at"), style=style),
                 }
             )
+    windows.sort(key=lambda w: w["id"] != "5h")
     return windows
 
 
