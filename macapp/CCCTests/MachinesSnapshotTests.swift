@@ -71,4 +71,41 @@ final class MachinesSnapshotTests: XCTestCase {
     func testTestHostDoesNotAutoLoadAccounts() {
         XCTAssertTrue(AppState.isRunningTests)
     }
+
+    func testAccountsViewDecodes() throws {
+        let snapshot = try decode("""
+        {"version":2,"generated_at":1,"providers":[],
+         "accounts_view":{"generated_at":1,
+          "machines":[
+            {"id":"local","name":"Here","short_name":"this Mac","platform":"Darwin","local":true,"online":true,"engine":"ccc"},
+            {"id":"box","name":"Box","short_name":"Box","platform":"Linux","local":false,"online":false,"engine":"cswap"}],
+          "accounts":[{"key":"claude|a@x.com|o1","provider":"claude","email":"a@x.com","alias":"",
+            "label":"a@x.com","org_name":"Org","plan":"","windows":[{"id":"5h","pct_used":20,"resets_in":"1h"}],
+            "usage_stale":false,"usage_from":"box","usage_at":100,"status_message":"","needs_login":false,
+            "disabled":false,"disabled_on":["box"],"active_on":["local"],"stored_on":["local","box"],
+            "machines":{
+              "local":{"state":"active","num":"1","query":"1","disabled":false},
+              "box":{"state":"offline","num":"4","query":"4","disabled":true,"last_state":"stored"}},
+            "consumable_resets":null,"consumable_reset_credits":[]}]}}
+        """)
+        let view = try XCTUnwrap(snapshot.accountsView)
+        XCTAssertEqual(view.machines.map(\.shortName), ["this Mac", "Box"])
+        let account = try XCTUnwrap(view.accounts.first)
+        XCTAssertEqual(account.presence(on: "local")?.state, .active)
+        let box = try XCTUnwrap(account.presence(on: "box"))
+        XCTAssertEqual(box.state, .offline)
+        XCTAssertEqual(box.num, "4")
+        XCTAssertEqual(box.lastState, "stored")
+        XCTAssertTrue(box.isDisabled)
+        XCTAssertTrue(account.mixedDisabled)
+        XCTAssertEqual(account.windows.first?.pctLeft, 80)
+    }
+
+    func testAbsentPresenceHasNoSlot() throws {
+        let presence = try JSONDecoder().decode(MachinePresence.self, from: Data(#"{"state":"absent"}"#.utf8))
+        XCTAssertEqual(presence.state, .absent)
+        XCTAssertFalse(presence.isPresent)
+        let needs = try JSONDecoder().decode(MachinePresence.self, from: Data(#"{"state":"needs_login","num":"2"}"#.utf8))
+        XCTAssertEqual(needs.state, .needsLogin)
+    }
 }

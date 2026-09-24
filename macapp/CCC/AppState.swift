@@ -7,6 +7,8 @@ final class AppState: ObservableObject {
     /// Latest snapshot that included this Mac: top-level providers + the
     /// seven-day cost report (WeeklyCostCard reads it).
     @Published private(set) var snapshot: Snapshot?
+    /// One row per account with its state on every machine (ccc >= 0.19).
+    @Published private(set) var view: AccountsView?
     /// Machines in display order (this Mac first), each with its accounts.
     @Published private(set) var machines: [MachineSnapshot] = []
     /// Machine ids with a live probe in flight.
@@ -115,6 +117,7 @@ final class AppState: ObservableObject {
             let snapshot = try await client.snapshot(refresh: false)
             self.snapshot = snapshot
             machines = snapshot.machineList
+            view = snapshot.accountsView
             hasLoaded = true
             errorMessage = nil
         } catch {
@@ -135,6 +138,9 @@ final class AppState: ObservableObject {
                 group.addTask { await self.refresh(machineID: id) }
             }
         }
+        // Each probe answered with a view built from the caches at that
+        // moment; one cached re-read afterwards merges them all.
+        await loadCached()
         lastRefreshed = Date()
     }
 
@@ -161,6 +167,7 @@ final class AppState: ObservableObject {
     /// Take a (possibly machine-limited) snapshot: machines merge in place;
     /// a snapshot that includes this Mac also replaces `snapshot` (costs).
     private func absorb(_ update: Snapshot) {
+        if let view = update.accountsView { self.view = view }
         if let machines = update.machines {
             merge(machines)
             if machines.contains(where: { $0.local }) { snapshot = update }
@@ -196,13 +203,13 @@ final class AppState: ObservableObject {
         guard !account.active, pendingAction == nil else { return }
         // codex-auth matches by email; cswap by slot number.
         let target = provider.id == "claude" ? account.num : account.email
-        await perform(key(machine, provider, account), machine: machine) {
+        await perform(key(machine, provider, account), machineID: machine.id) {
             try await self.client.switchAccount(machine: machine.id, provider: provider.id, account: target)
         }
     }
 
     func setDisabled(_ disabled: Bool, machine: MachineSnapshot, account: Account) async {
-        await perform(AccountKey(machine: machine.id, provider: "claude", num: account.num), machine: machine) {
+        await perform(AccountKey(machine: machine.id, provider: "claude", num: account.num), machineID: machine.id) {
             try await self.client.setDisabled(disabled, machine: machine.id, account: account.num)
         }
     }
@@ -210,7 +217,7 @@ final class AppState: ObservableObject {
     func remove(machine: MachineSnapshot, provider: Provider, account: Account) async {
         confirmingRemoval = nil
         let target = provider.id == "claude" ? account.num : account.email
-        await perform(key(machine, provider, account), machine: machine) {
+        await perform(key(machine, provider, account), machineID: machine.id) {
             try await self.client.removeAccount(machine: machine.id, provider: provider.id, account: target)
         }
     }
@@ -242,7 +249,7 @@ final class AppState: ObservableObject {
     }
 
     private func perform(
-        _ key: AccountKey, machine: MachineSnapshot, _ op: @escaping () async throws -> Void
+        _ key: AccountKey, machineID: String, _ op: @escaping () async throws -> Void
     ) async {
         guard pendingAction == nil else { return }
         pendingAction = key
@@ -250,13 +257,145 @@ final class AppState: ObservableObject {
         do {
             try await op()
             errorMessage = nil
-            await reloadCached(machineID: machine.id)  // ccc patched its cache
+            await reloadCached(machineID: machineID)  // ccc patched its cache
         } catch {
-            errorMessage = "\(machine.displayName): \(error.localizedDescription)"
+            errorMessage = "\(name(ofMachine: machineID)): \(error.localizedDescription)"
             return
         }
         // Usage for the new active account arrives with a live probe.
-        Task { await refresh(machineID: machine.id) }
+        Task { await refresh(machineID: machineID) }
+    }
+
+    // MARK: - Account-centric actions (machine chips)
+
+    /// Key for the chip of `account` on `machine` (pending / confirm state).
+    func chipKey(_ account: ViewAccount, _ machine: String) -> AccountKey {
+        AccountKey(machine: machine, provider: account.provider,
+                   num: account.presence(on: machine)?.num ?? "+")
+    }
+
+    /// The chip's primary action. Never moves a credential between machines:
+    /// it switches that machine to its own stored login, or starts a login there.
+    func tapChip(_ account: ViewAccount, machine: ViewMachine) async {
+        guard let presence = account.presence(on: machine.id) else { return }
+        switch presence.state {
+        case .stored:
+            await switchHere(account, machine: machine.id)
+        case .needsLogin:
+            reLogin(account, machine: machine.id)
+        case .absent:
+            if account.provider == "claude" {
+                addAccount(machineID: machine.id, email: account.email)
+            } else if machine.local {
+                openCodexLogin(machineID: machine.id)
+            } else {
+                errorMessage = "Sign in to Codex as \(account.email) on \(machine.name) with `codex login`."
+            }
+        case .active, .offline:
+            break
+        }
+    }
+
+    func switchHere(_ account: ViewAccount, machine id: String) async {
+        guard let query = account.presence(on: id)?.query else { return }
+        await perform(chipKey(account, id), machineID: id) {
+            try await self.client.switchAccount(machine: id, provider: account.provider, account: query)
+        }
+    }
+
+    func reLogin(_ account: ViewAccount, machine id: String) {
+        if account.provider == "codex" {
+            openCodexLogin(machineID: id)
+            return
+        }
+        do {
+            try LoginLauncher.openLogin(machine: id, provider: "claude",
+                                        num: account.presence(on: id)?.num)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        refreshLater(id)
+    }
+
+    private func openCodexLogin(machineID id: String) {
+        guard view?.machines.first(where: { $0.id == id })?.local == true else {
+            errorMessage = "Codex login opens a browser; run `codex login` on \(name(ofMachine: id))."
+            return
+        }
+        do {
+            try LoginLauncher.openLogin(machine: id, provider: "codex", num: nil)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        refreshLater(id)
+    }
+
+    func setDisabled(_ disabled: Bool, account: ViewAccount, machine id: String) async {
+        guard account.provider == "claude", let num = account.presence(on: id)?.num else { return }
+        await perform(chipKey(account, id), machineID: id) {
+            try await self.client.setDisabled(disabled, machine: id, account: num)
+        }
+    }
+
+    /// Row menu: every machine that stores the account and is reachable.
+    func setDisabledEverywhere(_ disabled: Bool, account: ViewAccount) async {
+        for id in account.storedOn where account.presence(on: id)?.state != .offline {
+            if account.presence(on: id)?.isDisabled == disabled { continue }
+            await setDisabled(disabled, account: account, machine: id)
+        }
+    }
+
+    func removeFrom(_ account: ViewAccount, machine id: String) async {
+        confirmingRemoval = nil
+        guard let query = account.presence(on: id)?.query else { return }
+        await perform(chipKey(account, id), machineID: id) {
+            try await self.client.removeAccount(machine: id, provider: account.provider, account: query)
+        }
+    }
+
+    func copyEmail(_ account: ViewAccount) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(account.email, forType: .string)
+    }
+
+    func addAccount(machineID id: String, email: String? = nil) {
+        if let email {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(email, forType: .string)  // for the login page
+        }
+        do {
+            try LoginLauncher.openAddAccount(machine: id)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        refreshLater(id)
+    }
+
+    func saveCurrentClaudeLogin(num: String, id: String) async {
+        guard pendingSaveID == nil else { return }
+        pendingSaveID = id
+        defer { pendingSaveID = nil }
+        do {
+            try await client.saveCurrentClaudeLogin(num: num)
+            await refresh(machineID: localMachine?.id ?? "local")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func consumeCodexReset(num: String, id: String, creditID: String?) async {
+        guard pendingResetID == nil else { return }
+        pendingResetID = id
+        defer { pendingResetID = nil }
+        do {
+            try await client.consumeCodexReset(num: num, creditID: creditID)
+            await refresh(machineID: localMachine?.id ?? "local")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func login(machine: MachineSnapshot, provider: Provider, account: Account) {

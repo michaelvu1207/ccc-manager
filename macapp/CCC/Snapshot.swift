@@ -9,6 +9,8 @@ struct Snapshot: Codable {
     let costs: CostReport?
     /// Additive (0.18): this Mac plus SSH machines. Absent from older ccc builds.
     let machines: [MachineSnapshot]?
+    /// Additive (0.19): one row per account with its state on every machine.
+    let accountsView: AccountsView?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -16,6 +18,7 @@ struct Snapshot: Codable {
         case providers
         case costs
         case machines
+        case accountsView = "accounts_view"
     }
 
     /// Machines to show; older snapshots present their providers as this Mac.
@@ -327,4 +330,97 @@ struct AccountKey: Hashable {
     let machine: String
     let provider: String
     let num: String
+}
+
+// MARK: - Account-centric view (0.19)
+
+struct AccountsView: Codable {
+    let machines: [ViewMachine]
+    let accounts: [ViewAccount]
+}
+
+/// A machine column in the account view (enabled, not a duplicate).
+struct ViewMachine: Codable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let shortName: String
+    let platform: String
+    let local: Bool
+    let online: Bool
+    let engine: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, platform, local, online, engine
+        case shortName = "short_name"
+    }
+}
+
+/// One account's state on one machine.
+struct MachinePresence: Codable, Equatable {
+    enum State: String, Codable {
+        case active, stored, absent, offline
+        case needsLogin = "needs_login"
+    }
+
+    let state: State
+    /// Slot number on that machine (slots differ between machines).
+    let num: String?
+    /// What to pass to switch/remove there: the slot for Claude, the email for Codex.
+    let query: String?
+    let disabled: Bool?
+    /// For offline machines: the last known state ("unknown" if never reached).
+    let lastState: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state, num, query, disabled
+        case lastState = "last_state"
+    }
+
+    var isPresent: Bool { num != nil }
+    var isDisabled: Bool { disabled ?? false }
+}
+
+struct ViewAccount: Codable, Identifiable {
+    let key: String
+    let provider: String
+    let email: String
+    let alias: String
+    let label: String
+    let orgName: String
+    let plan: String
+    let windows: [UsageWindow]
+    let usageStale: Bool
+    let usageFrom: String?
+    let usageAt: Double?
+    let statusMessage: String
+    let needsLogin: Bool
+    let disabled: Bool
+    let disabledOn: [String]
+    let activeOn: [String]
+    let storedOn: [String]
+    let machines: [String: MachinePresence]
+    let consumableResets: Int?
+    let consumableResetCredits: [ResetCredit]?
+
+    var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case key, provider, email, alias, label, plan, windows, disabled, machines
+        case orgName = "org_name"
+        case usageStale = "usage_stale"
+        case usageFrom = "usage_from"
+        case usageAt = "usage_at"
+        case statusMessage = "status_message"
+        case needsLogin = "needs_login"
+        case disabledOn = "disabled_on"
+        case activeOn = "active_on"
+        case storedOn = "stored_on"
+        case consumableResets = "consumable_resets"
+        case consumableResetCredits = "consumable_reset_credits"
+    }
+
+    func presence(on machine: String) -> MachinePresence? { machines[machine] }
+
+    /// Disabled on some machines but not all: shown per chip instead.
+    var mixedDisabled: Bool { !disabled && !disabledOn.isEmpty }
 }
