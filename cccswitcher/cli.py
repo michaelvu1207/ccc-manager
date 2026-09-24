@@ -781,7 +781,12 @@ def cmd_sync_hub(args: argparse.Namespace) -> int:
 def cmd_sync_agent(args: argparse.Namespace) -> int:
     from . import sync_agent
 
-    sync_agent.run_forever(_sync_client(), interval=args.interval)
+    client = _sync_client()
+    if args.poll:
+        sync_agent.run_forever(client, interval=args.interval)
+    else:
+        sync_agent.run_events(client, local_interval=args.local_interval,
+                              full_interval=args.full_interval, wait_timeout=args.wait_timeout)
     return 0
 
 
@@ -894,7 +899,11 @@ def _add_sync_parser(sub) -> None:
     p.add_argument("--bind")
     p.add_argument("--port", type=int)
     p.set_defaults(func=cmd_sync_hub)
-    p = ssub.add_parser("agent", help="Run the agent loop (pull/push every 60 s)")
+    p = ssub.add_parser("agent", help="Run the agent (long-poll the hub, check local logins every 2 min)")
+    p.add_argument("--local-interval", type=float, default=120.0, help="Local login check, seconds")
+    p.add_argument("--full-interval", type=float, default=3600.0, help="Full safety-net round, seconds")
+    p.add_argument("--wait-timeout", type=float, default=55.0, help="Long-poll timeout, seconds (max 55)")
+    p.add_argument("--poll", action="store_true", help="0.20 behavior: a full round every --interval")
     p.add_argument("--interval", type=float, default=60.0)
     p.set_defaults(func=cmd_sync_agent)
     p = ssub.add_parser("once", help="One agent round now")
