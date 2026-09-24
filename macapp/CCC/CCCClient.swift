@@ -17,14 +17,14 @@ enum CCCError: LocalizedError {
     }
 }
 
-/// The only place that spawns processes. All invocations are strictly
-/// serialized (see `serialized`) so concurrent provider refreshes never
-/// contend for the same state files.
+/// The only place that spawns processes. Invocations are serialized per
+/// machine (see `serialized`) so two runs never contend for one machine's
+/// state files, while different machines load in parallel.
 actor CCCClient {
     static let shared = CCCClient()
 
     private var cachedCCCPath: String?
-    private var tail: Task<Void, Never> = Task {}
+    private var tails: [String: Task<Void, Never>] = [:]
 
     // MARK: - Environment
 
@@ -83,7 +83,10 @@ actor CCCClient {
 
     // MARK: - Public API
 
-    func snapshot(refresh: Bool) async throws -> Snapshot {
+    /// Account state. `machines` limits the load to those ids (a remote probe
+    /// never waits for this Mac and vice versa); nil means every enabled
+    /// machine. Cached reads (`refresh: false`) never wait on running probes.
+    func snapshot(refresh: Bool, machines: [String]? = nil) async throws -> Snapshot {
         #if DEBUG
         // Deterministic, token-safe visual verification without reading live accounts.
         if let path = ProcessInfo.processInfo.environment["CCC_SNAPSHOT_FIXTURE"] {
@@ -93,46 +96,85 @@ actor CCCClient {
         #endif
         var args = ["snapshot"]
         if !refresh { args.append("--no-refresh") }
-        let data = try await runCCC(arguments: args, timeout: refresh ? 120 : 15)
+        for id in machines ?? [] { args += ["--machine", id] }
+        let key = refresh ? (machines?.joined(separator: ",") ?? "*") : nil
+        // ccc bounds each remote probe itself (ConnectTimeout + CCC_REMOTE_TIMEOUT).
+        let data = try await runCCC(arguments: args, timeout: refresh ? 150 : 20, key: key)
         return try JSONDecoder().decode(Snapshot.self, from: data)
     }
 
-    func switchAccount(provider: String, num: String) async throws {
-        _ = try await runCCC(arguments: ["switch", provider, num], timeout: 30)
+    func switchAccount(machine: String, provider: String, account: String) async throws {
+        _ = try await runCCC(
+            arguments: ["switch", provider, "--machine", machine, "--", account],
+            timeout: 90, key: machine
+        )
+    }
+
+    /// Claude only: hold out of / return to auto-rotation.
+    func setDisabled(_ disabled: Bool, machine: String, account: String) async throws {
+        _ = try await runCCC(
+            arguments: [disabled ? "disable" : "enable", "--machine", machine, "--", account],
+            timeout: 90, key: machine
+        )
+    }
+
+    /// The UI has already asked for confirmation, hence `--yes`.
+    func removeAccount(machine: String, provider: String, account: String) async throws {
+        _ = try await runCCC(
+            arguments: ["account", "remove", provider, "--machine", machine, "--yes", "--", account],
+            timeout: 90, key: machine
+        )
     }
 
     func saveCurrentClaudeLogin(num: String) async throws {
-        _ = try await runCCC(arguments: ["account", "save", "claude", num], timeout: 30)
+        _ = try await runCCC(arguments: ["account", "save", "claude", num], timeout: 30, key: "local")
     }
 
     func consumeCodexReset(num: String, creditID: String?) async throws {
         var arguments = ["reset", "codex", num]
         if let creditID { arguments += ["--credit-id", creditID] }
         arguments.append("--confirm")
-        _ = try await runCCC(arguments: arguments, timeout: 30)
+        _ = try await runCCC(arguments: arguments, timeout: 30, key: "local")
+    }
+
+    func machineList() async throws -> MachineList {
+        let data = try await runCCC(arguments: ["machines", "list", "--json"], timeout: 15, key: "config")
+        return try JSONDecoder().decode(MachineList.self, from: data)
+    }
+
+    /// `ccc machines <args>` (add / remove / rename / enable / disable / import-starline).
+    func editMachines(_ args: [String]) async throws {
+        _ = try await runCCC(arguments: ["machines"] + args, timeout: 15, key: "config")
     }
 
     // MARK: - Process plumbing
 
-    private func runCCC(arguments: [String], timeout: TimeInterval) async throws -> Data {
+    /// Commands that share a `key` (one machine, or the config file) run one
+    /// at a time so two runs never race on the same machine's state files.
+    /// Different machines run in parallel; `key: nil` (cached reads) never waits.
+    private func runCCC(arguments: [String], timeout: TimeInterval, key: String?) async throws -> Data {
         let ccc = try locateCCC()
         let env = environment()
-        return try await serialized {
+        let op: @Sendable () async throws -> Data = {
             try await Self.runAsync(
                 executable: ccc, arguments: arguments, environment: env, timeout: timeout
             )
         }
+        guard let key else { return try await op() }
+        return try await serialized(key: key, op)
     }
 
-    /// Chain operations so only one child process runs at a time, even across
-    /// actor suspension points (actors are reentrant at `await`).
-    private func serialized<T: Sendable>(_ op: @Sendable @escaping () async throws -> T) async throws -> T {
-        let previous = tail
+    /// Chain operations per key so only one child process per key runs at a
+    /// time, even across actor suspension points (actors are reentrant at `await`).
+    private func serialized<T: Sendable>(
+        key: String, _ op: @Sendable @escaping () async throws -> T
+    ) async throws -> T {
+        let previous = tails[key] ?? Task {}
         let task = Task { () throws -> T in
             await previous.value
             return try await op()
         }
-        tail = Task { _ = try? await task.value }
+        tails[key] = Task { _ = try? await task.value }
         return try await task.value
     }
 

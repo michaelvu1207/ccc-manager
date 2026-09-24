@@ -6,11 +6,15 @@ import SwiftUI
 struct UsageBar: View {
     let window: UsageWindow
 
-    private var color: Color {
-        guard let left = window.pctLeft else { return .secondary }
+    static func color(forLeft left: Double) -> Color {
         if left <= 10 { return .red }
         if left <= 30 { return .orange }
         return .green
+    }
+
+    private var color: Color {
+        guard let left = window.pctLeft else { return .secondary }
+        return Self.color(forLeft: left)
     }
 
     var body: some View {

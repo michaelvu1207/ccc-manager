@@ -21,22 +21,26 @@ struct PopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            header
-            tabPicker
-                .padding(.horizontal, 4)
-                .padding(.bottom, 2)
+            if state.showingMachines {
+                MachinesView()
+            } else {
+                header
+                tabPicker
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 2)
 
-            Divider().padding(.bottom, 2)
+                Divider().padding(.bottom, 2)
 
-            Group {
-                switch selectedTab {
-                case .accounts:
-                    accountsTab
-                case .usage:
-                    usageTab
+                Group {
+                    switch selectedTab {
+                    case .accounts:
+                        accountsTab
+                    case .usage:
+                        usageTab
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             if let error = state.errorMessage {
                 Label(error, systemImage: "exclamationmark.octagon.fill")
@@ -44,13 +48,15 @@ struct PopoverView: View {
                     .foregroundStyle(.red)
                     .lineLimit(3)
                     .padding(.horizontal, 8)
+                    .onTapGesture { state.errorMessage = nil }
+                    .help("Click to dismiss")
             }
 
             Divider().padding(.vertical, 2)
             footer
         }
         .padding(10)
-        .frame(width: 340)
+        .frame(width: 360)
     }
 
     private var tabPicker: some View {
@@ -65,19 +71,38 @@ struct PopoverView: View {
         .accessibilityLabel("CCC dashboard section")
     }
 
+    /// Accounts grouped by machine: this Mac first, then SSH hosts.
     @ViewBuilder
     private var accountsTab: some View {
-        if let snapshot = state.snapshot {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(snapshot.providers) { provider in
-                    section(for: provider)
-                }
-            }
-        } else if state.errorMessage == nil {
+        if !state.hasLoaded && state.errorMessage == nil {
             ProgressView("loading accounts…")
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 20)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(state.visibleMachines) { machine in
+                        MachineSection(machine: machine)
+                    }
+                    if !state.hiddenDuplicates.isEmpty {
+                        Text(duplicatesCaption)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 2)
+                    }
+                }
+                .padding(.trailing, 2)
+            }
+            .frame(maxHeight: 540)
+            .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var duplicatesCaption: String {
+        state.hiddenDuplicates.map { dup in
+            "\(dup.displayName) is the same machine as \(state.twinName(dup.duplicateOf ?? ""))"
+        }.joined(separator: " · ") + " — hidden."
     }
 
     private var usageTab: some View {
@@ -98,26 +123,6 @@ struct PopoverView: View {
         }
     }
 
-    private func section(for provider: Provider) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(provider.title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-            if provider.accounts.isEmpty {
-                Text(provider.available ? "no accounts found" : "provider unavailable")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 4)
-            } else {
-                ForEach(provider.accounts) { account in
-                    AccountRow(provider: provider, account: account)
-                }
-            }
-        }
-    }
-
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
@@ -126,7 +131,8 @@ struct PopoverView: View {
                 if state.isRefreshing {
                     HStack(spacing: 4) {
                         ProgressView().controlSize(.mini)
-                        Text("refreshing…")
+                        Text(state.loadingMachines.count > 1
+                             ? "refreshing \(state.loadingMachines.count) machines…" : "refreshing…")
                     }
                 } else {
                     Label(refreshedCaption, systemImage: "arrow.clockwise")
@@ -146,6 +152,16 @@ struct PopoverView: View {
             .toggleStyle(.checkbox)
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { state.showingMachines.toggle() }
+            } label: {
+                Image(systemName: state.showingMachines ? "person.2" : "server.rack")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(state.showingMachines ? Color.accentColor : .secondary)
+            .help(state.showingMachines ? "Back to accounts" : "Machines")
+            .accessibilityLabel(state.showingMachines ? "Back to accounts" : "Machines")
 
             Button {
                 NSApplication.shared.terminate(nil)

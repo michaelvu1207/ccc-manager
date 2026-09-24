@@ -7,12 +7,20 @@ struct Snapshot: Codable {
     let providers: [Provider]
     /// Additive in snapshot schema v2. Older v1 snapshots continue to decode.
     let costs: CostReport?
+    /// Additive (0.18): this Mac plus SSH machines. Absent from older ccc builds.
+    let machines: [MachineSnapshot]?
 
     enum CodingKeys: String, CodingKey {
         case version
         case generatedAt = "generated_at"
         case providers
         case costs
+        case machines
+    }
+
+    /// Machines to show; older snapshots present their providers as this Mac.
+    var machineList: [MachineSnapshot] {
+        machines ?? [MachineSnapshot.localFallback(providers: providers)]
     }
 
     func provider(_ id: String) -> Provider? {
@@ -172,6 +180,8 @@ struct Provider: Codable, Identifiable {
     let id: String  // "claude" | "codex"
     let available: Bool
     let accounts: [Account]
+    /// Why a remote provider has no accounts (e.g. "cswap list failed").
+    var error: String? = nil
 
     var title: String { id.uppercased() }
     var activeAccount: Account? { accounts.first { $0.active } }
@@ -189,11 +199,16 @@ struct Account: Codable, Identifiable {
     let consumableResetCredits: [ResetCredit]?
     let windows: [UsageWindow]
     let usageStale: Bool
+    /// Additive (0.18): held out of auto-rotation; alias; raw usage status.
+    var disabled: Bool? = nil
+    var alias: String? = nil
+    var status: String? = nil
 
     var id: String { num + "|" + email }
+    var isDisabled: Bool { disabled ?? false }
 
     enum CodingKeys: String, CodingKey {
-        case num, email, label, plan, active, windows
+        case num, email, label, plan, active, windows, disabled, alias, status
         case needsLogin = "needs_login"
         case statusMessage = "status_message"
         case consumableResets = "consumable_resets"
@@ -243,4 +258,73 @@ struct UsageWindow: Codable, Identifiable {
     var pctLeft: Double? {
         pctUsed.map { min(100, max(0, 100 - $0)) }
     }
+}
+
+// MARK: - Machines (0.18)
+
+/// One machine's accounts, as seen by its last load (this Mac) or probe (SSH).
+struct MachineSnapshot: Codable, Identifiable {
+    let id: String
+    let alias: String?
+    let displayName: String
+    let local: Bool
+    let engine: String?
+    let platform: String  // `uname -s`: "Darwin" | "Linux" | "" (never reached)
+    let online: Bool
+    let error: String
+    let fetchedAt: Double?
+    let stale: Bool
+    let hasData: Bool
+    let duplicateOf: String?
+    let providers: [Provider]
+
+    enum CodingKeys: String, CodingKey {
+        case id, alias, local, engine, platform, online, error, stale, providers
+        case displayName = "display_name"
+        case fetchedAt = "fetched_at"
+        case hasData = "has_data"
+        case duplicateOf = "duplicate_of"
+    }
+
+    static func localFallback(providers: [Provider]) -> MachineSnapshot {
+        MachineSnapshot(
+            id: "local", alias: nil, displayName: "This Mac", local: true, engine: "ccc",
+            platform: "Darwin", online: true, error: "", fetchedAt: nil, stale: false,
+            hasData: true, duplicateOf: nil, providers: providers
+        )
+    }
+
+    func provider(_ id: String) -> Provider? {
+        providers.first { $0.id == id }
+    }
+
+    var accountCount: Int { providers.reduce(0) { $0 + $1.accounts.count } }
+}
+
+/// One entry of `ccc machines list --json` (the editable machine list).
+struct MachineConfig: Codable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let alias: String?
+    let local: Bool
+    let enabled: Bool
+    let engine: String?
+}
+
+struct MachineList: Codable {
+    let configPath: String
+    let customized: Bool
+    let machines: [MachineConfig]
+
+    enum CodingKeys: String, CodingKey {
+        case machines, customized
+        case configPath = "config_path"
+    }
+}
+
+/// Stable key for one account on one machine (pending / confirm UI state).
+struct AccountKey: Hashable {
+    let machine: String
+    let provider: String
+    let num: String
 }
