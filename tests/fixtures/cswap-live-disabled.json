@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "activeAccountNumber": 2,
+  "accounts": [
+    {
+      "number": 1,
+      "email": "alice@example.com",
+      "organizationName": "",
+      "organizationUuid": "",
+      "isOrganization": false,
+      "active": false,
+      "usageStatus": "ok",
+      "usage": {
+        "fiveHour": {"pct": 12.0, "resetsAt": "2099-01-01T05:00:00+00:00", "countdown": "4h", "clock": "05:00"},
+        "sevenDay": {"pct": 40.0, "resetsAt": "2099-01-05T00:00:00+00:00", "countdown": "4d", "clock": "Jan 5", "expectedPct": 30.1, "aheadOfPace": true},
+        "scoped": [{"pct": 75.0, "resetsAt": "2099-01-05T00:00:00+00:00", "name": "Fable"}]
+      },
+      "usageFetchedAt": "2098-12-31T23:59:00Z",
+      "usageAgeSeconds": 60.0,
+      "alias": "work",
+      "disabled": true
+    },
+    {
+      "number": 2,
+      "email": "bob@example.com",
+      "organizationName": "Bob Org",
+      "organizationUuid": "00000000-0000-4000-8000-0000000000b0",
+      "isOrganization": true,
+      "active": true,
+      "usageStatus": "keychain_unavailable",
+      "usage": null
+    }
+  ],
+  "unclaimedCredentials": []
+}
