@@ -7,7 +7,7 @@
 
 # CCC · Claude Code Codex Manager
 
-**One self-contained account switcher and seven-day cost dashboard for Claude Code and Codex.**
+**One self-contained account switcher and seven-day cost dashboard for Claude Code and Codex — on every machine you use.**
 
 </div>
 
@@ -33,6 +33,9 @@ compatible and migrate in place without deleting the source data.
   appear as a misleading `$0`.
 - Curses TUI, plain CLI, additive snapshot schema v2, and native SwiftUI menu bar
   chart with accessible loading/empty/error/detail states.
+- Multi-machine view: accounts on your other Macs and Linux boxes (over SSH /
+  Tailscale), grouped by machine, with online/offline status and per-machine
+  switch, disable/enable, re-login, add, and remove.
 - Standard-library Python 3.10+ runtime on macOS and Linux.
 
 ## Install and upgrade
@@ -82,6 +85,10 @@ ccc alias work client-project
 ccc reset codex work --list       # inspect available consumable resets
 ccc reset codex work --credit-id ID --confirm
 
+ccc disable 2                    # hold slot 2 out of rotation / auto-switch
+ccc enable 2
+ccc add-account                  # claude /login, then store the new account
+
 ccc transfer export claude backup.cswap
 ccc transfer import claude backup.cswap
 ccc transfer export codex auth.json work
@@ -121,7 +128,9 @@ as the Codex desktop app. It is not a documented public API, so CCC keeps it in
 an isolated adapter and reports provider errors without retrying consumption.
 
 TUI keys remain `↑`/`↓` (or `k`/`j`), Enter to switch/login, `l` to re-login,
-`r` to refresh, and `q` to quit.
+`r` to refresh, and `q` to quit; `d` disables/enables the selected Claude
+account and `a` adds a Claude account on the selected machine. Accounts are
+grouped by machine.
 
 ## Migration and compatibility
 
@@ -168,9 +177,62 @@ Data sources:
 - Codex: `${CODEX_HOME:-~/.codex}/{sessions,archived_sessions}/**/*.jsonl`
 - Price table: `cccswitcher/pricing.py` (`pricing_version` is emitted in JSON)
 
+## Machines
+
+CCC shows this Mac plus any SSH host you can reach with
+`ssh -o BatchMode=yes <alias>` (Tailscale host names work). This Mac always
+uses CCC's built-in engine. Remote machines do not need CCC: by default
+(`engine: auto` = `cswap`) CCC runs `cswap list --json` (claude-swap ≥ 0.26)
+and `codex-auth list` there, with `$HOME/.local/bin` on `PATH`. A remote that
+has CCC installed can use `engine: ccc` instead (`ccc snapshot --no-costs`
+and `ccc` actions over SSH).
+
+Remote machines are probed in parallel, one SSH round trip each. An
+unreachable machine shows as offline with its last known accounts and never
+delays the others (`ConnectTimeout=6`; overall `CCC_REMOTE_TIMEOUT`, default
+60 s). Two aliases that reach the same host and home directory are detected,
+and the second is hidden. CCC never copies credentials between machines and
+never reads remote tokens.
+
+The list lives in `~/.config/ccc/machines.json`. Until you edit it, the
+default is this Mac plus every host in Starline's connection list.
+
+```sh
+ccc machines                          # show the list (id, name, ssh alias, engine)
+ccc machines add gpu-box --name "GPU box" [--engine ccc]
+ccc machines rename path-pc "Path PC"
+ccc machines disable simforge-a100    # keep it listed, stop polling
+ccc machines enable simforge-a100
+ccc machines engine gpu-box ccc       # auto | ccc | cswap
+ccc machines remove gpu-box
+ccc machines import-starline          # add hosts new in Starline
+
+ccc list -m path-pc                   # this Mac + one remote
+ccc snapshot --machine path-pc        # JSON for one machine (the app uses this)
+ccc switch claude 2 --machine path-pc
+ccc switch codex a@b.com --machine path-pc
+ccc disable 3 --machine path-pc
+ccc account remove claude 3 --machine path-pc   # asks first (--yes to skip)
+ccc login claude 2 --machine path-pc  # ssh -t: switch, claude /login, switch back
+ccc add-account --machine path-pc     # ssh -t: claude /login, then cswap add
+```
+
+`ccc snapshot` keeps schema v2 and adds a `machines` array: each entry has
+`id`, `alias`, `display_name`, `local`, `engine`, `platform`, `online`,
+`error`, `fetched_at`, `stale`, `has_data`, `duplicate_of`, and `providers`.
+Accounts gain `alias`, `disabled`, and `status`. On a remote Mac, accounts
+other than the active one can show "keychain locked": macOS does not unlock
+the login keychain for SSH sessions.
+
 ## macOS menu-bar app
 
-The native app renders `ccc snapshot`; it never reads tokens itself. Its compact
+The native app renders `ccc snapshot`; it never reads tokens itself. The
+Accounts tab groups accounts by machine (collapsible sections with a status
+dot and platform icon; offline machines are dimmed with "last seen"). Each
+row has a `…` menu: Switch here, Re-login, Disable/Enable, and Remove (with an
+inline confirmation). A section's `+` opens Terminal to add an account on that
+machine. The server-rack button in the footer opens the Machines screen (add,
+rename, remove, pause polling, import from Starline). The Usage tab's compact
 chart distinguishes Claude (orange) and Codex (blue), shows today/week totals,
 and expands to provider/account/model/token details.
 

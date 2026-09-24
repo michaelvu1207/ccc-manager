@@ -3,7 +3,10 @@ import unittest
 
 from cccswitcher import remote, remote_parse
 
-from .fakes import FIXTURES, REGISTRY
+try:
+    from .fakes import FIXTURES, REGISTRY
+except ImportError:  # `unittest discover -s tests` imports test modules top-level
+    from fakes import FIXTURES, REGISTRY
 
 
 def load(name):

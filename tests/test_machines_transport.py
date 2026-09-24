@@ -5,7 +5,10 @@ import unittest
 
 from cccswitcher import actions, cache, claude, cli, machines, remote, snapshot
 
-from .fakes import FakeWorld
+try:
+    from .fakes import FakeWorld
+except ImportError:  # `unittest discover -s tests` imports test modules top-level
+    from fakes import FakeWorld
 
 
 def m(alias, mid=None, engine="auto"):
