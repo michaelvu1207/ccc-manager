@@ -313,13 +313,121 @@ def cmd_switch(args: argparse.Namespace) -> int:
         return 1
 
 
+def _view(refresh: bool = False) -> dict:
+    from . import snapshot
+
+    return snapshot.build_snapshot(refresh=refresh, include_costs=False)["accounts_view"]
+
+
+def _pick_account(view: dict, query: str, provider: str | None):
+    from . import accounts_view
+
+    matches = accounts_view.find(view, query, provider)
+    if not matches:
+        raise SystemExit(f"ccc: no account matches {query!r} (see `ccc accounts`)")
+    if len(matches) > 1:
+        names = ", ".join(f"{a['provider']}:{a['email']}" for a in matches)
+        raise SystemExit(f"ccc: {query!r} matches several accounts ({names}); be more specific")
+    return matches[0]
+
+
 def cmd_disable(args: argparse.Namespace, disabled: bool = True) -> int:
+    action = "disable" if disabled else "enable"
+    if getattr(args, "everywhere", False):
+        account = _pick_account(_view(), args.query, "claude")
+        all_machines = machines.load()
+        rc_all = 0
+        for mid in account["stored_on"]:
+            machine = machines.find(all_machines, mid)
+            num = account["machines"].get(mid, {}).get("num")
+            if machine is None or not num:
+                continue
+            rc, message = actions.account_action(machine, "claude", action, num)
+            _report(rc, message)
+            rc_all = rc_all or rc
+        return rc_all
     machine = _resolve_machine(args.machine)
-    return _report(*actions.account_action(machine, "claude", "disable" if disabled else "enable", args.query))
+    return _report(*actions.account_action(machine, "claude", action, args.query))
 
 
 def cmd_enable(args: argparse.Namespace) -> int:
     return cmd_disable(args, disabled=False)
+
+
+CHIP = {"active": "●", "stored": "○", "needs_login": "!", "absent": "+", "offline": "×"}
+
+
+def _chip_text(machine: dict, entry: dict) -> str:
+    state = entry["state"]
+    text = f"{CHIP[state]} {machine['short_name']}"
+    if entry.get("disabled"):
+        text += " (disabled)"
+    if state == "active":
+        return cyan(text)
+    if state == "needs_login":
+        return red(text)
+    return dim(text) if state in ("absent", "offline") else text
+
+
+def cmd_accounts(args: argparse.Namespace) -> int:
+    """One row per account, with its state on every machine."""
+    view = _view(refresh=not args.no_refresh)
+    if args.json:
+        print(json.dumps(view))
+        return 0
+    machine_by_id = {m["id"]: m for m in view["machines"]}
+    for provider in ("claude", "codex"):
+        rows = [a for a in view["accounts"] if a["provider"] == provider]
+        if not rows:
+            continue
+        print(bold(provider.capitalize()))
+        width = max(len(a["label"]) for a in rows)
+        for a in rows:
+            flag = dim(" (disabled)") if a["disabled"] else ""
+            usage = "  ".join(_remote_cells(a)) if not a["needs_login"] else dim("needs login everywhere")
+            source = ""
+            if a["usage_from"] and a["usage_at"] and not a["needs_login"]:
+                src = machine_by_id.get(a["usage_from"], {}).get("short_name", a["usage_from"])
+                source = dim(f"  as of {fmt_age(a['usage_at'])} ago from {src}")
+            print(f"  {a['label']:<{width}}{flag}  {usage}{source}")
+            chips = [_chip_text(machine_by_id[mid], entry) for mid, entry in a["machines"].items()]
+            print("    " + "   ".join(chips))
+        print()
+    print(dim("  ● active  ○ stored (ccc assign to switch)  ! needs login  + not on that machine  × offline"))
+    return 0
+
+
+def cmd_assign(args: argparse.Namespace) -> int:
+    """Make an account the active login on a machine, without moving credentials."""
+    machine = _resolve_machine(args.machine)
+    account = _pick_account(_view(), args.query, args.provider)
+    provider = account["provider"]
+    entry = account["machines"].get(machine.id)
+    if entry is None:
+        return _report(2, f"{machine.name} is not an enabled machine (see `ccc machines`)")
+    state = entry["state"]
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if state == "offline":
+        return _report(255, f"{machine.name} is offline")
+    if state == "active":
+        return _report(0, f"{account['email']} is already active on {machine.name}")
+    if state == "stored":
+        return _report(*actions.account_action(machine, provider, "switch", entry["query"]))
+    if provider == "codex":
+        hint = "ccc login codex" if machine.local else "codex login (on that machine)"
+        return _report(1, f"{account['email']} needs a Codex login on {machine.name}: run {hint}")
+    if state == "needs_login":
+        if not interactive:
+            return _report(1, f"needs login: run `ccc login claude {entry['num']} --machine {machine.id}`")
+        if machine.local:
+            return login_claude(entry["num"], stay=True)
+        return actions.login_claude_remote(machine, entry["num"], stay=True)
+    # absent: a fresh /login on that machine, then store it there
+    if not interactive:
+        return _report(1, f"{account['email']} is not on {machine.name}: run "
+                          f"`ccc add-account --machine {machine.id}` and sign in as {account['email']}")
+    print(dim(f"sign in as {account['email']}"))
+    return actions.add_account(machine)
 
 
 def cmd_add_account(args: argparse.Namespace) -> int:
@@ -640,7 +748,21 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("query", metavar="ACCOUNT", help="Slot number or email")
         _add_machine_opt(p)
+        p.add_argument("--everywhere", action="store_true",
+                       help="On every machine that stores this account (query = email)")
         p.set_defaults(func=func)
+
+    accounts_parser = sub.add_parser("accounts", help="One row per account with its state on every machine")
+    accounts_parser.add_argument("--no-refresh", action="store_true", help="Use cached state (fast)")
+    accounts_parser.add_argument("--json", action="store_true")
+    accounts_parser.set_defaults(func=cmd_accounts)
+
+    assign_parser = sub.add_parser(
+        "assign", help="Make an account active on a machine (switch if stored there, else start a login)")
+    assign_parser.add_argument("query", metavar="ACCOUNT", help="Email (or alias)")
+    assign_parser.add_argument("--provider", choices=["claude", "codex"])
+    _add_machine_opt(assign_parser)
+    assign_parser.set_defaults(func=cmd_assign)
 
     add_parser = sub.add_parser("add-account",
                                 help="Log in a new Claude account (claude /login) on a machine and store it")
