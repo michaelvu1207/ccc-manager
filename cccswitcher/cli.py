@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -659,6 +660,260 @@ def _add_machines_parser(sub) -> None:
         lambda ms: f"{a.machine}: engine {machines.set_engine(ms, a.machine, a.engine).resolved_engine}"))
     p = msub.add_parser("import-starline", help="Add SSH hosts from Starline's connection list")
     p.set_defaults(func=cmd_machines_import)
+    p = msub.add_parser("install", help="Install this CCC on a machine (wheel over ssh + uv tool install)")
+    p.add_argument("machine")
+    p.add_argument("--wheel", help="Use this wheel instead of building one")
+    p.set_defaults(func=cmd_machines_install)
+
+
+def cmd_machines_install(args: argparse.Namespace) -> int:
+    from . import remote_install
+
+    machine = _resolve_machine(args.machine)
+    try:
+        version = remote_install.install(machine, Path(args.wheel) if args.wheel else None)
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        return _report(1, str(exc))
+    return _report(0, f"{machine.name}: {version or 'installed'}")
+
+
+# ---------- shared-login sync ----------
+
+def _sync_client():
+    from . import sync_agent
+
+    try:
+        return sync_agent.client_from_config()
+    except sync_agent.HubError as exc:
+        raise SystemExit(f"ccc: {exc}")
+
+
+def cmd_sync_init(args: argparse.Namespace) -> int:
+    from . import sync_config
+
+    config = sync_config.load()
+    if config.get("secret") and not args.force:
+        return _report(2, f"sync already set up ({sync_config.config_path()}); --force to replace the secret")
+    config.update({
+        "hub_url": args.hub_url, "secret": sync_config.new_secret(), "machine": args.machine,
+        "role": "hub", "bind": args.bind, "port": args.port,
+        "withhold_refresh_token": bool(args.withhold_refresh_token),
+    })
+    sync_config.save(config)
+    return _report(0, f"hub configured in {sync_config.config_path()} (secret stored there, 0600). "
+                      "Next: `ccc sync install-hub`, then `tailscale serve` (see README).")
+
+
+def cmd_sync_join(args: argparse.Namespace) -> int:
+    from . import sync_config
+
+    if args.secret_stdin:
+        secret = sys.stdin.readline().strip()
+    elif args.from_machine:
+        machine = _resolve_machine(args.from_machine)
+        result = remote.run_script(machine, remote.command_script(["ccc", "sync", "secret"]), 30)
+        secret = result.stdout.strip() if result.rc == 0 else ""
+        if not secret:
+            return _report(1, f"could not read the sync secret from {machine.name}")
+    else:
+        return _report(2, "pass --secret-stdin or --from MACHINE")
+    if len(secret) < 20:
+        return _report(2, "secret looks wrong (too short)")
+    config = sync_config.load()
+    config.update({"hub_url": args.hub_url, "secret": secret, "machine": args.machine,
+                   "role": config.get("role") or "agent"})
+    sync_config.save(config)
+    return _report(0, f"joined {args.hub_url} as {args.machine}")
+
+
+def cmd_sync_secret(args: argparse.Namespace) -> int:
+    from . import sync_config
+
+    if sys.stdout.isatty():
+        return _report(2, "refusing to print the secret to a terminal (it is read over ssh by `sync join --from`)")
+    secret = sync_config.load().get("secret")
+    if not secret:
+        return _report(1, "no sync secret here")
+    print(secret)
+    return 0
+
+
+def cmd_sync_distribute(args: argparse.Namespace) -> int:
+    """Send this machine's hub URL + secret to another machine over ssh stdin."""
+    from . import sync_config
+
+    config = sync_config.load()
+    if not sync_config.enabled(config):
+        return _report(2, "sync is not set up here")
+    machine = _resolve_machine(args.machine)
+    if machine.local:
+        return _report(2, "pick a remote machine")
+    script = remote.command_script(["ccc", "sync", "join", "--hub-url", config["hub_url"],
+                                    "--machine", args.as_name or machine.id, "--secret-stdin"])
+    try:
+        proc = subprocess.run(remote.ssh_argv(machine.alias, script), input=config["secret"] + "\n",
+                              capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return _report(255, f"{machine.name}: timed out")
+    return _report(proc.returncode, remote.last_line(proc.stdout) or remote.last_line(proc.stderr))
+
+
+def cmd_sync_hub(args: argparse.Namespace) -> int:
+    from . import sync_config, sync_hub
+
+    config = sync_config.load()
+    if not config.get("secret"):
+        return _report(2, "run `ccc sync init` first")
+    hub = sync_hub.Hub(sync_hub.HubStore(), config["secret"], host=args.bind or config.get("bind") or "127.0.0.1",
+                       port=args.port or int(config.get("port") or sync_config.DEFAULT_PORT),
+                       hub_machine=config.get("machine") or "",
+                       withhold=bool(config.get("withhold_refresh_token")))
+    hub.start()
+    print(f"ccc sync hub listening on {hub.url}", flush=True)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        hub.stop()
+    return 0
+
+
+def cmd_sync_agent(args: argparse.Namespace) -> int:
+    from . import sync_agent
+
+    sync_agent.run_forever(_sync_client(), interval=args.interval)
+    return 0
+
+
+def cmd_sync_once(args: argparse.Namespace) -> int:
+    from . import sync_agent
+
+    try:
+        summary = sync_agent.run_once(_sync_client())
+    except sync_agent.HubError as exc:
+        return _report(1, str(exc))
+    print(json.dumps(summary) if args.json else
+          f"pulled {len(summary['pulled'])}, new slots {len(summary['created'])}, "
+          f"pushed {len(summary['pushed'])}, live login updated: {summary['active_updated']}"
+          + (" (Claude Code was refreshing; retry later)" if summary["skipped_busy"] else "")
+          + ("".join(f"\n  error: {e}" for e in summary["errors"])))
+    return 1 if summary["errors"] else 0
+
+
+def cmd_sync_status(args: argparse.Namespace) -> int:
+    from . import sync_agent, sync_config
+
+    config = sync_config.load()
+    local_state = sync_agent.load_state()
+    if not sync_config.enabled(config):
+        return _report(1, "sync is not set up (ccc sync init on the hub, ccc sync join elsewhere)")
+    try:
+        status = _sync_client().status()
+    except sync_agent.HubError as exc:
+        status = {"error": str(exc)}
+    if args.json:
+        print(json.dumps({"hub_url": config["hub_url"], "machine": config.get("machine"),
+                          "local": {k: local_state.get(k) for k in ("last_sync", "last_errors")},
+                          "hub": status}))
+        return 0
+    print(bold("Hub") + f"  {config['hub_url']}  " + (red("unreachable") if "error" in status else cyan("online")))
+    if "error" in status:
+        print(dim(f"  {status['error']}"))
+    last = local_state.get("last_sync")
+    print(dim(f"  this machine: {config.get('machine') or '?'} · last sync "
+              + (f"{fmt_age(last)} ago" if last else "never")))
+    if "error" in status:
+        return 1
+    print(bold("Shared logins"))
+    for acct in status.get("accounts", []):
+        flag = "" if acct.get("shared", True) else dim("  (not shared)")
+        exp = acct.get("expires_at")
+        left = f"expires in {fmt_duration(exp - time.time())}" if exp else "no credential"
+        err = red(f"  {acct['refresh_error']}") if acct.get("refresh_error") else ""
+        print(f"  {acct['email']:<32} gen {acct.get('generation', 0):<4} {dim(left)}{flag}{err}")
+    print(bold("Machines"))
+    gens = {a["key"]: a.get("generation", 0) for a in status.get("accounts", [])}
+    for name, info in sorted(status.get("machines", {}).items()):
+        behind = [k for k, g in gens.items() if info.get("generations", {}).get(k, -1) != g]
+        state = cyan("in sync") if not behind else dim(f"{len(behind)} behind")
+        print(f"  {name:<20} last sync {fmt_age(info.get('last_sync'))} ago  {state}"
+              + "".join(red(f"\n    {e}") for e in info.get("errors", [])))
+    return 0
+
+
+def cmd_sync_share(args: argparse.Namespace) -> int:
+    from . import sync_agent
+
+    account = _pick_account(_view(), args.query, "claude")
+    try:
+        _sync_client().share(account["key"], not args.off)
+    except sync_agent.HubError as exc:
+        return _report(1, str(exc))
+    return _report(0, f"{account['email']}: {'not shared' if args.off else 'shared'}")
+
+
+def cmd_sync_install(args: argparse.Namespace) -> int:
+    from . import services
+
+    path = services.install(args.role, load=not args.no_load)
+    return _report(0, f"wrote {path}" + ("" if args.no_load else " and started it"))
+
+
+def cmd_sync_uninstall(args: argparse.Namespace) -> int:
+    from . import services
+
+    removed = [role for role in (args.role or list(services.ROLES)) if services.uninstall(role)]
+    return _report(0, f"removed {', '.join(removed)}" if removed else "nothing installed")
+
+
+def _add_sync_parser(sub) -> None:
+    sync = sub.add_parser("sync", help="Share Claude logins across your machines (one hub refreshes)")
+    ssub = sync.add_subparsers(dest="sync_command", required=True)
+    p = ssub.add_parser("init", help="Set up THIS machine as the hub (creates the shared secret)")
+    p.add_argument("--hub-url", required=True, help="URL agents use, e.g. https://box.tailnet.ts.net")
+    p.add_argument("--machine", required=True, help="Name of this machine in reports")
+    p.add_argument("--bind", default="127.0.0.1", help="Listen address (default loopback, behind tailscale serve)")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--withhold-refresh-token", action="store_true",
+                   help="Give non-hub machines access tokens only")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_sync_init)
+    p = ssub.add_parser("join", help="Point this machine's agent at the hub")
+    p.add_argument("--hub-url", required=True)
+    p.add_argument("--machine", required=True, help="Name of this machine in reports")
+    p.add_argument("--secret-stdin", action="store_true", help="Read the shared secret from stdin")
+    p.add_argument("--from", dest="from_machine", metavar="MACHINE", help="Fetch the secret over ssh")
+    p.set_defaults(func=cmd_sync_join)
+    p = ssub.add_parser("secret", help="(internal) print the secret into a pipe, for `join --from`")
+    p.set_defaults(func=cmd_sync_secret)
+    p = ssub.add_parser("distribute", help="Send hub URL + secret to a machine (ssh stdin)")
+    p.add_argument("--machine", required=True)
+    p.add_argument("--as", dest="as_name", help="Its name in reports (default: machine id)")
+    p.set_defaults(func=cmd_sync_distribute)
+    p = ssub.add_parser("hub", help="Run the hub (HTTP + the single refresher)")
+    p.add_argument("--bind")
+    p.add_argument("--port", type=int)
+    p.set_defaults(func=cmd_sync_hub)
+    p = ssub.add_parser("agent", help="Run the agent loop (pull/push every 60 s)")
+    p.add_argument("--interval", type=float, default=60.0)
+    p.set_defaults(func=cmd_sync_agent)
+    p = ssub.add_parser("once", help="One agent round now")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_sync_once)
+    p = ssub.add_parser("status", help="Hub, shared logins, and each machine's last sync")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_sync_status)
+    p = ssub.add_parser("share", help="Share an account's login (or stop with --off)")
+    p.add_argument("query", metavar="EMAIL")
+    p.add_argument("--off", action="store_true")
+    p.set_defaults(func=cmd_sync_share)
+    for role in ("hub", "agent"):
+        p = ssub.add_parser(f"install-{role}", help=f"Run the {role} as a login service")
+        p.add_argument("--no-load", action="store_true", help="Only write the unit file")
+        p.set_defaults(func=cmd_sync_install, role=role)
+    p = ssub.add_parser("uninstall", help="Remove the sync services")
+    p.add_argument("role", nargs="*", choices=["hub", "agent"])
+    p.set_defaults(func=cmd_sync_uninstall)
 
 
 def _add_machine_opt(p: argparse.ArgumentParser) -> None:
@@ -769,6 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_machine_opt(add_parser)
     add_parser.set_defaults(func=cmd_add_account)
     _add_machines_parser(sub)
+    _add_sync_parser(sub)
 
     account_parser = sub.add_parser("account", help="Add or remove a stored account")
     account_sub = account_parser.add_subparsers(dest="action", required=True)

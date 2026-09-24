@@ -6,7 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
-import urllib.request
+import urllib.request  # noqa: F401 (urllib.error used below)
 from pathlib import Path
 
 from cccswitcher import claude, claude_locks, sync_agent, sync_config, sync_hub
