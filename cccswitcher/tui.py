@@ -1,11 +1,12 @@
 """Interactive curses TUI — the default `ccc` view.
 
-Arrow keys move between accounts across both providers. Enter activates the
-selected account; if its credentials are dead it launches the provider's
-login page instead (and keeps it active afterwards). `l` re-authenticates the
-selection while restoring your current active account, `r` refreshes usage,
-`q` quits. Account emails are copied to the clipboard before login flows so
-they can be pasted straight into the provider's account picker.
+Accounts are grouped by machine (this machine first, then SSH hosts from
+`ccc machines`). Arrow keys move between accounts; Enter activates the
+selected account on its machine, or launches a login when its credentials
+are dead. `l` re-authenticates the selection while restoring the machine's
+current active account, `d` toggles cswap disable, `a` adds a Claude account
+on the selected machine, `r` refreshes every machine, `q` quits. Machines
+that are offline keep their last known accounts, dimmed.
 """
 
 from __future__ import annotations
@@ -15,13 +16,15 @@ import locale
 import threading
 from dataclasses import dataclass
 
-from . import actions, claude, codex, monthly, theme
-from .render import fmt_countdown, fmt_duration
+from . import actions, machines, monthly, remote, remote_parse, snapshot, theme
+from .render import fmt_age, fmt_duration
 
 HINTS = [
     ("↑/↓", "move"),
     ("enter", "switch / login"),
     ("l", "re-login"),
+    ("d", "disable"),
+    ("a", "add account"),
     ("r", "refresh"),
     ("q", "quit"),
 ]
@@ -36,45 +39,84 @@ class Window:
 
 @dataclass
 class Entry:
-    provider: str  # "claude" | "codex"
-    acct: object  # ClaudeAccount | CodexAccount
-    needs_login: bool
+    provider: str  # "claude" | "codex" | "add" (placeholder row: add an account)
+    acct: dict | None  # snapshot-shaped account dict
+    state: remote.MachineState
+
+    @property
+    def machine(self) -> machines.Machine:
+        return self.state.machine
+
+    @property
+    def num(self) -> str:
+        return self.acct["num"] if self.acct else ""
 
     @property
     def email(self) -> str:
-        return self.acct.email
+        return self.acct["email"] if self.acct else ""
+
+    @property
+    def disabled(self) -> bool:
+        return bool(self.acct and self.acct.get("disabled"))
+
+    @property
+    def needs_login(self) -> bool:
+        return bool(self.acct and self.acct.get("needs_login"))
+
+    @property
+    def label(self) -> str:
+        if not self.acct:
+            return "+ add a Claude account"
+        return self.acct["label"] + (" (disabled)" if self.disabled else "")
 
     @property
     def active(self) -> bool:
-        return self.acct.active
+        return bool(self.acct and self.acct.get("active"))
+
+    @property
+    def note(self) -> str:
+        return (self.acct or {}).get("status_message") or ""
 
     def windows(self) -> list[Window]:
-        """Two rate-limit windows (5h + weekly) as structured data for bars."""
-        usage = getattr(self.acct, "usage", None)
-        if not isinstance(usage, dict):
-            return []
-        if self.provider == "claude":
-            out = []
-            for key, label in (("five_hour", "5h"), ("seven_day", "wk")):
-                w = usage.get(key)
-                if w:
-                    cd = (w.get("countdown") or "").replace(" ", "")
-                    out.append(Window(label, w.get("pct"), cd))
-            return out
         out = []
-        for key, label, style in (("primary", "5h", "hm"), ("secondary", "wk", "dh")):
-            w = usage.get(key)
-            if w:
-                cd = fmt_countdown(w.get("resets_at"), style=style).replace(" ", "")
-                out.append(Window(label, w.get("used_percent"), cd))
+        for raw in (self.acct or {}).get("windows") or []:
+            w = remote_parse.render_window(raw)
+            out.append(Window(w["id"], w["pct_used"], (w["resets_in"] or "").replace(" ", "")))
         return out
+
+
+def build_entries(states: list[remote.MachineState]) -> list[list[Entry]]:
+    """Selectable rows per machine; duplicates of another machine are skipped."""
+    groups = []
+    for state in states:
+        if state.duplicate_of:
+            groups.append([])
+            continue
+        claude_rows = state.accounts("claude")
+        rows = [Entry("claude", a, state) for a in claude_rows]
+        rows += [Entry("codex", a, state) for a in state.accounts("codex")]
+        claude_available = (state.provider("claude") or {}).get("available", False)
+        if not claude_rows and claude_available and (state.online or state.has_data):
+            rows.insert(0, Entry("add", None, state))
+        groups.append(rows)
+    return groups
+
+
+def _local_state(machine: machines.Machine, refresh: bool) -> remote.MachineState:
+    import platform
+
+    return remote.MachineState(
+        machine=machine, online=True, platform=platform.system(),
+        fingerprint=remote.local_fingerprint(), providers=snapshot._local_providers(refresh),
+        has_data=True,
+    )
 
 
 class App:
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.claude_entries: list[Entry] = []
-        self.codex_entries: list[Entry] = []
+        self.states: list[remote.MachineState] = []
+        self.groups: list[list[Entry]] = []
         self.stats: dict[str, monthly.ProviderStats | None] = {}
         self.status = "loading..."
         self.refreshing = False
@@ -86,56 +128,66 @@ class App:
 
     # ---------- data ----------
 
+    def _publish(self, states: list[remote.MachineState]) -> None:
+        all_machines = machines.load()
+        remote.mark_duplicates(states, all_machines)
+        groups = build_entries(states)
+        with self.lock:
+            self.states = states
+            self.groups = groups
+            self.dirty = True
+
     def _load(self, refresh: bool, then_refresh: bool = False, force_stats: bool = False) -> None:
-        """Fetch accounts and usage stats, publishing each as it lands.
+        """Fetch machines and usage stats, publishing each as it lands.
 
         Plain daemon threads, not ThreadPoolExecutor: concurrent.futures
         joins its workers at interpreter exit, so `q` would hang on any
-        in-flight provider API/local-log work. Accounts are published as soon
-        as both providers load; native local-log stats fill in afterwards.
+        in-flight ssh/cswap/ccusage subprocess. Machines publish one by one
+        as they answer, so a slow host never holds up the others.
         """
-        results: dict = {}
-
-        def runner(key, fn):
-            try:
-                results[key] = fn()
-            except Exception:
-                results[key] = None
-
-        jobs = {
-            "claude": lambda: claude.load_accounts(refresh),
-            "codex": lambda: codex.load_accounts(refresh),
-            "claude_stats": lambda: monthly.fetch_stats("claude", force=force_stats),
-            "codex_stats": lambda: monthly.fetch_stats("codex", force=force_stats),
-        }
-        threads = {
-            k: threading.Thread(target=runner, args=(k, fn), daemon=True)
-            for k, fn in jobs.items()
-        }
-        for t in threads.values():
-            t.start()
-
-        threads["claude"].join()
-        threads["codex"].join()
-        claude_accounts = (results.get("claude") or ([], None))[0]
-        codex_accounts = results.get("codex") or []
-        claude_entries = [
-            Entry("claude", a, claude.needs_login(a)) for a in claude_accounts
+        targets = [m for m in machines.load() if m.enabled]
+        states: list[remote.MachineState] = [
+            remote.MachineState(machine=m, online=True) if m.local else remote.cached_state(m)
+            for m in targets
         ]
-        codex_entries = [Entry("codex", a, codex.needs_login(a)) for a in codex_accounts]
-        with self.lock:
-            self.claude_entries = claude_entries
-            self.codex_entries = codex_entries
-            self.status = "loading usage stats…" if not self.stats else ""
-            self.dirty = True
+        # This Mac's cached accounts first (fast, local files only).
+        for i, m in enumerate(targets):
+            if m.local:
+                try:
+                    states[i] = _local_state(m, refresh=False)
+                except Exception as exc:
+                    states[i].error = str(exc)
+        self._publish(list(states))
 
-        threads["claude_stats"].join()
-        threads["codex_stats"].join()
+        stats: dict = {}
+
+        def stats_runner(key):
+            try:
+                stats[key] = monthly.fetch_stats(key, force=force_stats)
+            except Exception:
+                stats[key] = None
+
+        def machine_runner(i, machine):
+            try:
+                state = (_local_state(machine, refresh=True) if machine.local
+                         else remote.probe(machine, refresh=True))
+            except Exception as exc:  # keep the TUI alive whatever happens
+                state = states[i]
+                state.error = str(exc)
+            states[i] = state
+            self._publish(list(states))
+
+        threads = [threading.Thread(target=stats_runner, args=(k,), daemon=True)
+                   for k in ("claude", "codex")]
+        if refresh:
+            threads += [threading.Thread(target=machine_runner, args=(i, m), daemon=True)
+                        for i, m in enumerate(targets)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
         with self.lock:
-            self.stats = {
-                "claude": results.get("claude_stats"),
-                "codex": results.get("codex_stats"),
-            }
+            self.stats = {"claude": stats.get("claude"), "codex": stats.get("codex")}
             self.refreshing = False
             self.status = "" if refresh else "cached data — refreshing live usage…"
             self.dirty = True
@@ -150,13 +202,13 @@ class App:
                 return
             self.refreshing = True
             if refresh:
-                self.status = "refreshing live usage…"
+                self.status = "refreshing every machine…"
         threading.Thread(
             target=self._load, args=(refresh, then_refresh, force_stats), daemon=True
         ).start()
 
     def entries(self) -> list[Entry]:
-        return self.claude_entries + self.codex_entries
+        return [e for group in self.groups for e in group]
 
     # ---------- actions ----------
 
@@ -175,29 +227,56 @@ class App:
         curses.curs_set(0)
         self.refresh_async(refresh=True)
 
+    def _say(self, message: str) -> None:
+        with self.lock:
+            self.status = message
+            self.dirty = True
+
     def _login(self, stdscr, entry: Entry, stay: bool) -> None:
-        actions.copy_to_clipboard(entry.email)
-        if entry.provider == "claude":
+        if entry.provider == "add":
+            self._add_account(stdscr, entry)
+        elif entry.provider == "claude" and entry.machine.local:
+            actions.copy_to_clipboard(entry.email)
+            self._run_in_terminal(stdscr, lambda: actions.login_claude(entry.num, stay=stay))
+        elif entry.provider == "claude":
             self._run_in_terminal(
-                stdscr, lambda: actions.login_claude(entry.acct.num, stay=stay)
+                stdscr, lambda: actions.login_claude_remote(entry.machine, entry.num, stay)
             )
-        else:
+        elif entry.machine.local:
+            actions.copy_to_clipboard(entry.email)
             self._run_in_terminal(stdscr, lambda: actions.login_codex(stay=stay))
+        else:
+            self._say(f"codex login opens a browser; run `codex-auth login` on {entry.machine.name}")
+
+    def _add_account(self, stdscr, entry: Entry) -> None:
+        self._run_in_terminal(stdscr, lambda: actions.add_account(entry.machine))
+
+    def _toggle_disabled(self, entry: Entry) -> None:
+        if entry.provider != "claude":
+            self._say("only Claude accounts can be disabled")
+            return
+        action = "enable" if entry.disabled else "disable"
+        rc, message = actions.account_action(entry.machine, "claude", action, entry.num)
+        if rc == 0:
+            self.refresh_async(refresh=False)
+        self._say(message)
 
     def _activate(self, stdscr, entry: Entry) -> None:
+        if entry.provider == "add":
+            self._add_account(stdscr, entry)
+            return
         if entry.needs_login:
             self._login(stdscr, entry, stay=True)
             return
         if entry.active:
-            self.status = f"{entry.email} is already the active {entry.provider} account"
-            self.dirty = True
+            self._say(f"{entry.email} is already the active {entry.provider} account on {entry.machine.name}")
             return
-        query = entry.acct.num if entry.provider == "claude" else entry.email
-        rc, message = actions.switch_account(entry.provider, query)
-        self.status = message
-        self.dirty = True
+        query = entry.num if entry.provider == "claude" else entry.email
+        self._say(f"switching on {entry.machine.name}…")
+        rc, message = actions.account_action(entry.machine, entry.provider, "switch", query)
         if rc == 0:
             self.refresh_async(refresh=False)
+        self._say(message)
 
     # ---------- low-level drawing ----------
 
@@ -253,9 +332,6 @@ class App:
 
     # ---------- panels ----------
 
-    def _active_summary(self) -> str:
-        return " / ".join(e.email.split("@")[0] for e in self.entries() if e.active)
-
     def _draw_icon(self, stdscr, top, left, width, height):
         """Top-left app icon: an inline image where supported, else ASCII."""
         self._box(stdscr, top, left, width, height, "")
@@ -270,47 +346,110 @@ class App:
             tx = left + max(1, (width - len(text)) // 2)
             self._put(stdscr, midy + dy, tx, text, theme.attr(role, bold=bold))
 
+    def _row_count(self) -> int:
+        """Lines the account panel needs: per machine a header, rows, notes."""
+        rows = 0
+        for state, group in zip(self.states, self.groups):
+            rows += 1  # machine header
+            if state.duplicate_of:
+                continue
+            rows += len(group)
+            rows += bool(state.accounts("claude")) + bool(state.accounts("codex"))  # provider labels
+            if not group:
+                rows += 1  # "no accounts" / error line
+        return rows
+
+    def _machine_header(self, state: remote.MachineState) -> list[tuple[str, int]]:
+        m = state.machine
+        platform = {"Darwin": "macOS", "Linux": "Linux"}.get(state.platform, state.platform)
+        dot_role = "good" if state.online else "danger"
+        if (not state.has_data and not state.error) or state.duplicate_of:
+            dot_role = "muted"
+        segs = [(theme.DOT + " ", theme.attr(dot_role)),
+                (m.name.upper(), theme.attr("title", bold=True))]
+        details = []
+        if m.local:
+            details.append("this machine")
+        if platform:
+            details.append(platform)
+        if state.duplicate_of:
+            twin = next(("this Mac" if x.machine.local else x.machine.name
+                         for x in self.states if x.machine.id == state.duplicate_of), state.duplicate_of)
+            details.append(f"same machine as {twin}; accounts shown there")
+        elif not state.online and state.has_data:
+            details.append(f"offline · last seen {fmt_age(state.fetched_at)} ago")
+        elif not state.online:
+            details.append("offline")
+        elif not state.has_data:
+            details.append("connecting…")
+        if details:
+            segs.append(("  " + " · ".join(details), theme.attr("muted")))
+        return segs
+
     def _draw_accounts(self, stdscr, top, left, width, height):
-        """Top-right account switcher."""
+        """Top-right account switcher, grouped by machine."""
         self._box(stdscr, top, left, width, height, "Accounts")
         inner = left + 2
         right = left + width - 2
         avail = right - inner
-        email_w = max((len(e.email) for e in self.entries()), default=10)
+        email_w = max((len(e.label) for e in self.entries()), default=10)
         email_w = min(email_w, max(12, avail - 86))  # leave room for bars + "resets in" text
         y = top + 1
         flat = 0
-        sections = [("CLAUDE", "claude", self.claude_entries),
-                    ("CODEX", "codex", self.codex_entries)]
-        for label, prole, entries in sections:
-            if y >= top + height - 1:
+        bottom = top + height - 1
+        for state, group in zip(self.states, self.groups):
+            if y >= bottom:
                 break
-            self._put(stdscr, y, inner, label, theme.attr("muted", bold=True))
+            self._segs_clip(stdscr, y, inner, right, self._machine_header(state))
             y += 1
-            for e in entries:
-                if y >= top + height - 1:
+            if state.duplicate_of:
+                continue
+            if not group:
+                claude_p = state.provider("claude") or {}
+                note = claude_p.get("error") or state.error or (
+                    "no data yet" if not state.has_data else "no accounts")
+                self._put(stdscr, y, inner + 2, note[: max(0, avail - 2)], theme.attr("muted"))
+                y += 1
+                continue
+            last_provider = None
+            for e in group:
+                if y >= bottom:
                     break
-                self._draw_account_row(stdscr, y, inner, right, e, flat == self.sel, email_w)
+                if e.provider in ("claude", "codex") and e.provider != last_provider:
+                    self._put(stdscr, y, inner + 2, e.provider.upper(), theme.attr("muted", bold=True))
+                    y += 1
+                    last_provider = e.provider
+                    if y >= bottom:
+                        break
+                self._draw_account_row(stdscr, y, inner + 2, right, e, flat == self.sel, email_w)
                 y += 1
                 flat += 1
 
     def _draw_account_row(self, stdscr, y, inner, right, e: Entry, selected, email_w):
-        prole = "claude" if e.provider == "claude" else "codex"
         self._put(stdscr, y, inner - 1, theme.ACCENT if selected else " ",
                   theme.attr("accent", bold=True))
+        if e.provider == "add":
+            role = "accent" if selected else "muted"
+            self._put(stdscr, y, inner + 1, e.label + ("  (press enter)" if selected else ""),
+                      theme.attr(role, bold=selected))
+            return
+        prole = "claude" if e.provider == "claude" else "codex"
+        offline = not e.state.online
         # Keep colour quiet: only the highlighted row wears its provider tint
         # (Claude orange / Codex blue). Active account is marked by a green dot.
         dot_attr = theme.attr("good") if e.active else theme.attr("muted")
         if selected:
             email_attr = theme.attr(prole, bold=True)
+        elif offline or e.disabled:
+            email_attr = theme.attr("muted", bold=e.active)
         else:
             email_attr = theme.attr("text", bold=e.active)
 
-        email = e.email if len(e.email) <= email_w else e.email[: email_w - 1] + "…"
+        label = e.label if len(e.label) <= email_w else e.label[: email_w - 1] + "…"
         segs = [
             (theme.DOT + " ", dot_attr),
-            (f"{e.acct.num:>2}  ", theme.attr("muted")),
-            (f"{email:<{email_w}}  ", email_attr),
+            (f"{e.num:>2}  ", theme.attr("muted")),
+            (f"{label:<{email_w}}  ", email_attr),
         ]
         if e.needs_login:
             segs += [(theme.WARN + " ", theme.attr("danger", bold=True)),
@@ -319,12 +458,14 @@ class App:
             return
         windows = e.windows()
         if not windows:
-            segs.append(("usage unavailable", theme.attr("muted")))
+            segs.append((e.note or "usage unavailable", theme.attr("muted")))
             self._segs_clip(stdscr, y, inner + 1, right, segs)
             return
         for w in windows:
             remaining = None if w.pct is None else 100 - w.pct
             bar_str, role = theme.bar(remaining)
+            if offline:
+                role = "muted"
             pct = f"{round(remaining):>3}% left" if remaining is not None else "   ? left"
             reset = f" · resets in {w.resets}" if w.resets else ""
             segs += [
@@ -334,6 +475,8 @@ class App:
                 (reset, theme.attr("muted")),
                 ("   ", 0),
             ]
+        if e.acct.get("usage_stale"):
+            segs.append(("(last known)", theme.attr("muted")))
         self._segs_clip(stdscr, y, inner + 1, right, segs)
 
     def _segs_clip(self, stdscr, y, x, right, segments):
@@ -419,7 +562,7 @@ class App:
             x = self._put(stdscr, y, x, " " + desc, theme.attr("muted"))
 
     def _layout(self, w: int) -> dict:
-        acc_rows = len(self.claude_entries) + len(self.codex_entries) + 2
+        acc_rows = self._row_count()
         art_cols, art_rows = self._art_size
         # Icon box hugs the art (+2 border) but always leaves room for accounts.
         icon_w = min(art_cols + 2, max(24, w - 44)) if art_cols else 22
@@ -435,8 +578,7 @@ class App:
         # Full clear only when the layout shape changes (accounts/stats arriving
         # after the first paint), so growing panels don't leave stale cells;
         # steady-state frames use erase() to avoid flicker.
-        shape = (len(self.claude_entries), len(self.codex_entries), bool(self.stats),
-                 stdscr.getmaxyx())
+        shape = (self._row_count(), bool(self.stats), stdscr.getmaxyx())
         if shape != self._last_shape:
             stdscr.clear()
             self._last_shape = shape
@@ -515,6 +657,10 @@ class App:
                 self._activate(stdscr, entries[min(self.sel, len(entries) - 1)])
             elif entries and ch == ord("l"):
                 self._login(stdscr, entries[min(self.sel, len(entries) - 1)], stay=False)
+            elif entries and ch == ord("d"):
+                self._toggle_disabled(entries[min(self.sel, len(entries) - 1)])
+            elif entries and ch == ord("a"):
+                self._add_account(stdscr, entries[min(self.sel, len(entries) - 1)])
 
 
 def _month_short(mk: str) -> str:
