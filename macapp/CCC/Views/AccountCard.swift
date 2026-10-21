@@ -59,6 +59,7 @@ struct AccountCard: View {
 
     private var titleLine: some View {
         HStack(spacing: 4) {
+            autoSwitchBadge
             Text(account.label)
                 .font(.callout)
                 .fontWeight(account.activeOn.isEmpty ? .regular : .semibold)
@@ -82,6 +83,33 @@ struct AccountCard: View {
                     .help("Disabled on: " + account.disabledOn.map { state.name(ofMachine: $0) }.joined(separator: ", "))
             }
         }
+    }
+
+    /// Auto-switch order: a number (machines move to 1 first, then 2…) or
+    /// "×" (never switched to). Click toggles; the accounts below renumber.
+    private var autoSwitchBadge: some View {
+        let number = state.autoSwitchOrder[account.key]
+        let tint = number == nil ? Color.secondary : Color.accentColor
+        return Button {
+            state.toggleAutoSwitchExcluded(account)
+        } label: {
+            Group {
+                if let number {
+                    Text("\(number)").font(.system(size: 9, weight: .semibold).monospacedDigit())
+                } else {
+                    Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                }
+            }
+            .foregroundStyle(tint)
+            .frame(width: 14, height: 14)
+            .background(Circle().strokeBorder(tint.opacity(0.5), lineWidth: 1))
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .opacity(state.autoSwitchEnabled ? 1 : 0.4)
+        .help(number.map { "Auto-switch order \($0): machines move to lower numbers first. Click to never auto-switch to this account." }
+              ?? "Never auto-switched to. Click to add it back to the auto-switch order.")
+        .accessibilityLabel(number.map { "Auto-switch order \($0)" } ?? "Excluded from auto-switch")
     }
 
     private var titleHelp: String {

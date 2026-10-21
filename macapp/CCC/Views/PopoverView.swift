@@ -101,7 +101,33 @@ struct PopoverView: View {
             }
             .frame(maxHeight: 540)
             .fixedSize(horizontal: false, vertical: true)
+            if state.view != nil { autoSwitchControls }
         }
+    }
+
+    /// The auto-switch toggle and, under it, the last switch it made.
+    private var autoSwitchControls: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Auto-switch when an account has 5% left", isOn: Binding(
+                get: { state.autoSwitchEnabled },
+                set: { state.setAutoSwitch($0) }
+            ))
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help("When the account a machine uses has 5% or less left in its 5-hour or weekly window, "
+                  + "switch that machine to the lowest-numbered account stored there with more left")
+            if let last = state.lastAutoSwitch {
+                Label(last, systemImage: "arrow.left.arrow.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .onTapGesture { state.lastAutoSwitch = nil }
+                    .help("Click to dismiss")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 2)
     }
 
     /// The account matrix: machine column headers once, then one line per

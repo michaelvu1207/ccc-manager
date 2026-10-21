@@ -245,6 +245,17 @@ that machine with a fresh `/login`. A disabled state is per machine; an
 account shows "(disabled)" when every machine that stores it has it disabled,
 and "(disabled on N)" otherwise.
 
+**Auto-switch in the app** (on by default; the checkbox under the account
+list). When the account a machine uses has 5% or less left in its 5-hour or
+weekly window, the app switches that machine to the first account, top to
+bottom, that is stored there, does not need a login, is not disabled there,
+and has more than 5% left. The list puts the weekly quota that resets soonest
+first, so that is the order. The number at the start of each row is that
+order; click it to change it to "×" (never switched to), and the accounts
+below take the next numbers. The app checks after every refresh (every 5
+minutes, and when the popover opens) and waits 10 minutes before it tries a
+failed switch on the same machine again. This is separate from `ccc auto`.
+
 In the TUI, ←/→ pick a machine column on the selected account, Enter acts on
 that marker (never on the account as a whole), and `m` switches to the
 machine-grouped view.

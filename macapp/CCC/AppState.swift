@@ -32,12 +32,24 @@ final class AppState: ObservableObject {
     @Published private(set) var hasLoaded = false
     @Published private(set) var pendingSaveID: String?
     @Published private(set) var pendingResetID: String?
+    /// Switch machines off an account at 5% left (see AutoSwitch). On by default.
+    @Published private(set) var autoSwitchEnabled: Bool
+    /// Account keys never auto-switched to (the "×" badge).
+    @Published private(set) var autoSwitchExcluded: Set<String>
+    /// "Auto-switched Mac to b@x.com (a@x.com had 3% left)" — the last switch.
+    @Published var lastAutoSwitch: String?
 
     private let client = CCCClient.shared
     private var refreshTimer: Timer?
+    /// Last auto-switch attempt per "machine|provider", so a failing switch
+    /// is not retried on every refresh.
+    private var autoSwitchAttempts: [String: Date] = [:]
 
     static let refreshInterval: TimeInterval = 300
+    static let autoSwitchCooldown: TimeInterval = 600
     private static let collapsedKey = "collapsedMachines"
+    private static let autoSwitchKey = "autoSwitchEnabled"
+    private static let autoSwitchExcludedKey = "autoSwitchExcluded"
 
     /// Unit tests host the app; never touch real accounts from there.
     nonisolated static var isRunningTests: Bool {
@@ -46,6 +58,8 @@ final class AppState: ObservableObject {
 
     init() {
         collapsed = Set(UserDefaults.standard.stringArray(forKey: Self.collapsedKey) ?? [])
+        autoSwitchEnabled = UserDefaults.standard.object(forKey: Self.autoSwitchKey) as? Bool ?? true
+        autoSwitchExcluded = Set(UserDefaults.standard.stringArray(forKey: Self.autoSwitchExcludedKey) ?? [])
         guard !Self.isRunningTests else { return }
         Task {
             await loadCached()
@@ -148,6 +162,7 @@ final class AppState: ObservableObject {
         // moment; one cached re-read afterwards merges them all.
         await loadCached()
         lastRefreshed = Date()
+        await autoSwitchIfNeeded()
     }
 
     func refresh(machineID id: String) async {
@@ -255,10 +270,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    @discardableResult
     private func perform(
         _ key: AccountKey, machineID: String, _ op: @escaping () async throws -> Void
-    ) async {
-        guard pendingAction == nil else { return }
+    ) async -> Bool {
+        guard pendingAction == nil else { return false }
         pendingAction = key
         defer { pendingAction = nil }
         do {
@@ -267,10 +283,59 @@ final class AppState: ObservableObject {
             await reloadCached(machineID: machineID)  // ccc patched its cache
         } catch {
             errorMessage = "\(name(ofMachine: machineID)): \(error.localizedDescription)"
-            return
+            return false
         }
         // Usage for the new active account arrives with a live probe.
         Task { await refresh(machineID: machineID) }
+        return true
+    }
+
+    // MARK: - Auto-switch
+
+    /// Auto-switch numbers for the badges: 1, 2, 3… per provider, top to bottom.
+    var autoSwitchOrder: [String: Int] {
+        AutoSwitch.order(view?.accounts ?? [], excluded: autoSwitchExcluded)
+    }
+
+    func setAutoSwitch(_ enabled: Bool) {
+        autoSwitchEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.autoSwitchKey)
+        if enabled {
+            autoSwitchAttempts = [:]
+            Task { await autoSwitchIfNeeded() }
+        }
+    }
+
+    /// The badge click: a number turns into "×" (never a target) and back.
+    func toggleAutoSwitchExcluded(_ account: ViewAccount) {
+        if autoSwitchExcluded.contains(account.key) {
+            autoSwitchExcluded.remove(account.key)
+        } else {
+            autoSwitchExcluded.insert(account.key)
+        }
+        UserDefaults.standard.set(Array(autoSwitchExcluded), forKey: Self.autoSwitchExcludedKey)
+    }
+
+    /// Move every machine off an account that is low (see AutoSwitch).
+    func autoSwitchIfNeeded() async {
+        guard autoSwitchEnabled, !Self.isRunningTests, let view else { return }
+        let now = Date()
+        for move in AutoSwitch.plan(view, excluded: autoSwitchExcluded) {
+            let attemptKey = move.machine + "|" + move.provider
+            if let last = autoSwitchAttempts[attemptKey],
+               now.timeIntervalSince(last) < Self.autoSwitchCooldown { continue }
+            guard pendingAction == nil else { return }  // a user action runs; next refresh
+            autoSwitchAttempts[attemptKey] = now
+            let key = AccountKey(machine: move.machine, provider: move.provider, num: move.num)
+            let switched = await perform(key, machineID: move.machine) {
+                try await self.client.switchAccount(machine: move.machine, provider: move.provider,
+                                                    account: move.query)
+            }
+            if switched {
+                lastAutoSwitch = "Auto-switched \(name(ofMachine: move.machine)) to \(move.to)"
+                    + " (\(move.from) had \(Int(move.fromLeft))% left)"
+            }
+        }
     }
 
     // MARK: - Account-centric actions (machine chips)

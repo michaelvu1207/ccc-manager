@@ -13,8 +13,11 @@
 		2E4554F2C30CC36DCB3F9D1D /* AccountMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC7BAA1227FAF7FDF883E93D /* AccountMatrix.swift */; };
 		322FFA74C42FDE6E84114326 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E394E9A7682AB7FEBD3E76 /* Snapshot.swift */; };
 		338215E909E54AB0EA88CF2C /* CCCApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88AD8B6526D20C7E19D9232 /* CCCApp.swift */; };
+		34BCD3884240732244BA42A0 /* AutoSwitchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B718987E751C912A2CDB2832 /* AutoSwitchTests.swift */; };
 		442236ABC4E2AF4A48AB447E /* MachineSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0717135E333E85A08D8288 /* MachineSection.swift */; };
 		56F9D1F91D366FCFFFB1947A /* AccountMatrixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B40BC40460A1C1C4A872098 /* AccountMatrixTests.swift */; };
+		6C18E2B35F59BCF01B09686A /* AutoSwitch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54A0A607E3039B9406573B2A /* AutoSwitch.swift */; };
+		6DF04567556712187A8C44FB /* ccc-banner-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 19E8921FBAD77E1078C01777 /* ccc-banner-light.png */; };
 		8CC4121B2982A17C9F19FD17 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB2641683065D2A1AF47640D /* PopoverView.swift */; };
 		970252C00379F39BBF0AAA04 /* WeeklyCostCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05F58E298011FC3365A1A317 /* WeeklyCostCard.swift */; };
 		9AD4578A32CAEE2FC8BDD75A /* AccountRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF795AACB87E7C0E946B60AD /* AccountRow.swift */; };
@@ -22,10 +25,9 @@
 		9F6261A8A6AC81FA1C7BCD21 /* WeeklyCostViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DAFC845DCE5FA7C37D48E3 /* WeeklyCostViewModelTests.swift */; };
 		CB1B2B489C6DF7F56188504F /* snapshot-v2.json in Resources */ = {isa = PBXBuildFile; fileRef = 1DAAC5D256D3AB061AB698C8 /* snapshot-v2.json */; };
 		D5344C6DEDFCA3ECB60B0CB1 /* LoginLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97A3496FAE3149F4B48E777 /* LoginLauncher.swift */; };
-		DED3F21D06A5D2573C331E40 /* ccc-banner-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 2E9BF8BB85306501AFB0B805 /* ccc-banner-light.png */; };
 		E739DE276AB9090F5329521F /* MachinesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97DE73A2E526765E38C7E8E3 /* MachinesView.swift */; };
 		F05BCA2B7BB6077EEFE760A6 /* UsageBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09D507806026ED4C843E0ED /* UsageBar.swift */; };
-		F66F05FFC65A0B96A58DC88A /* ccc-banner-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 4175050AA0F7115DCC3AE0A2 /* ccc-banner-dark.png */; };
+		F33F18491E61236EE65CA694 /* ccc-banner-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = C0A073CD2B14374BFAE5A0A3 /* ccc-banner-dark.png */; };
 		FC5E2382B779810CECD94F05 /* WeeklyCostViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2038801DFFC4AC9C410E45C5 /* WeeklyCostViewModel.swift */; };
 /* End PBXBuildFile section */
 
@@ -44,18 +46,20 @@
 		0C304B4298C59F93DADBD8BC /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		12DAFC845DCE5FA7C37D48E3 /* WeeklyCostViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyCostViewModelTests.swift; sourceTree = "<group>"; };
 		13660253742C3ADD3CDC91AF /* CCC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CCC.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		19E8921FBAD77E1078C01777 /* ccc-banner-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-light.png"; sourceTree = "<group>"; };
 		1D18EF3A4AAB73D04FCE1B24 /* MachinesSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachinesSnapshotTests.swift; sourceTree = "<group>"; };
 		1DAAC5D256D3AB061AB698C8 /* snapshot-v2.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "snapshot-v2.json"; sourceTree = "<group>"; };
 		2038801DFFC4AC9C410E45C5 /* WeeklyCostViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyCostViewModel.swift; sourceTree = "<group>"; };
 		2D0717135E333E85A08D8288 /* MachineSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineSection.swift; sourceTree = "<group>"; };
-		2E9BF8BB85306501AFB0B805 /* ccc-banner-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-light.png"; sourceTree = "<group>"; };
-		4175050AA0F7115DCC3AE0A2 /* ccc-banner-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-dark.png"; sourceTree = "<group>"; };
 		4F5E8596A5BCA7A61D76D317 /* CCCTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CCCTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		54A0A607E3039B9406573B2A /* AutoSwitch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSwitch.swift; sourceTree = "<group>"; };
 		68E394E9A7682AB7FEBD3E76 /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
 		871446D325652FD52F163F71 /* AccountCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCard.swift; sourceTree = "<group>"; };
 		96BDBEB4E2D13A2B85F14029 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		97DE73A2E526765E38C7E8E3 /* MachinesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachinesView.swift; sourceTree = "<group>"; };
 		9B40BC40460A1C1C4A872098 /* AccountMatrixTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMatrixTests.swift; sourceTree = "<group>"; };
+		B718987E751C912A2CDB2832 /* AutoSwitchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSwitchTests.swift; sourceTree = "<group>"; };
+		C0A073CD2B14374BFAE5A0A3 /* ccc-banner-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ccc-banner-dark.png"; sourceTree = "<group>"; };
 		C88AD8B6526D20C7E19D9232 /* CCCApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CCCApp.swift; sourceTree = "<group>"; };
 		C97A3496FAE3149F4B48E777 /* LoginLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginLauncher.swift; sourceTree = "<group>"; };
 		E09D507806026ED4C843E0ED /* UsageBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBar.swift; sourceTree = "<group>"; };
@@ -70,6 +74,7 @@
 			isa = PBXGroup;
 			children = (
 				0C304B4298C59F93DADBD8BC /* AppState.swift */,
+				54A0A607E3039B9406573B2A /* AutoSwitch.swift */,
 				C88AD8B6526D20C7E19D9232 /* CCCApp.swift */,
 				E2C0DE6BEE2CA234EBFBCDDA /* CCCClient.swift */,
 				96BDBEB4E2D13A2B85F14029 /* Info.plist */,
@@ -79,6 +84,15 @@
 				4B95DC5638563E70D98E7959 /* Views */,
 			);
 			path = CCC;
+			sourceTree = "<group>";
+		};
+		3B3A4DB46A7DE898E6F0AE27 /* assets */ = {
+			isa = PBXGroup;
+			children = (
+				C0A073CD2B14374BFAE5A0A3 /* ccc-banner-dark.png */,
+				19E8921FBAD77E1078C01777 /* ccc-banner-light.png */,
+			);
+			path = assets;
 			sourceTree = "<group>";
 		};
 		44F0C2773A774F4070EED24E /* Fixtures */ = {
@@ -93,6 +107,7 @@
 			isa = PBXGroup;
 			children = (
 				9B40BC40460A1C1C4A872098 /* AccountMatrixTests.swift */,
+				B718987E751C912A2CDB2832 /* AutoSwitchTests.swift */,
 				1D18EF3A4AAB73D04FCE1B24 /* MachinesSnapshotTests.swift */,
 				12DAFC845DCE5FA7C37D48E3 /* WeeklyCostViewModelTests.swift */,
 				44F0C2773A774F4070EED24E /* Fixtures */,
@@ -115,11 +130,20 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		87D46279A45132C5C799EB59 /* app-autoswitch */ = {
+			isa = PBXGroup;
+			children = (
+				3B3A4DB46A7DE898E6F0AE27 /* assets */,
+			);
+			name = "app-autoswitch";
+			path = ..;
+			sourceTree = "<group>";
+		};
 		A594C0B3F6FD2B60FB43F5F4 = {
 			isa = PBXGroup;
 			children = (
+				87D46279A45132C5C799EB59 /* app-autoswitch */,
 				228C1B9A2A88D0D7BCA183E4 /* CCC */,
-				F3FDBB6C8E242DB203F312DD /* CCCSwitcher-remote */,
 				46A6DE3268025A8A5DFAAA0C /* CCCTests */,
 				BCC9028AA0CF1F3FCB01D913 /* Products */,
 			);
@@ -132,24 +156,6 @@
 				4F5E8596A5BCA7A61D76D317 /* CCCTests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		D676AE1BECC0B0E049B30F1B /* assets */ = {
-			isa = PBXGroup;
-			children = (
-				4175050AA0F7115DCC3AE0A2 /* ccc-banner-dark.png */,
-				2E9BF8BB85306501AFB0B805 /* ccc-banner-light.png */,
-			);
-			path = assets;
-			sourceTree = "<group>";
-		};
-		F3FDBB6C8E242DB203F312DD /* CCCSwitcher-remote */ = {
-			isa = PBXGroup;
-			children = (
-				D676AE1BECC0B0E049B30F1B /* assets */,
-			);
-			name = "CCCSwitcher-remote";
-			path = ..;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -231,8 +237,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F66F05FFC65A0B96A58DC88A /* ccc-banner-dark.png in Resources */,
-				DED3F21D06A5D2573C331E40 /* ccc-banner-light.png in Resources */,
+				F33F18491E61236EE65CA694 /* ccc-banner-dark.png in Resources */,
+				6DF04567556712187A8C44FB /* ccc-banner-light.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -252,6 +258,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				56F9D1F91D366FCFFFB1947A /* AccountMatrixTests.swift in Sources */,
+				34BCD3884240732244BA42A0 /* AutoSwitchTests.swift in Sources */,
 				027BEB2A38B922403B18A136 /* MachinesSnapshotTests.swift in Sources */,
 				9F6261A8A6AC81FA1C7BCD21 /* WeeklyCostViewModelTests.swift in Sources */,
 			);
@@ -265,6 +272,7 @@
 				2E4554F2C30CC36DCB3F9D1D /* AccountMatrix.swift in Sources */,
 				9AD4578A32CAEE2FC8BDD75A /* AccountRow.swift in Sources */,
 				1A12399556C94F339DC7D2CD /* AppState.swift in Sources */,
+				6C18E2B35F59BCF01B09686A /* AutoSwitch.swift in Sources */,
 				338215E909E54AB0EA88CF2C /* CCCApp.swift in Sources */,
 				07617E902DAF192BB63D8781 /* CCCClient.swift in Sources */,
 				D5344C6DEDFCA3ECB60B0CB1 /* LoginLauncher.swift in Sources */,
