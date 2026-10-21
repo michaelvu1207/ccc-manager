@@ -56,6 +56,16 @@ final class AutoSwitchTests: XCTestCase {
         XCTAssertEqual(moves.first?.fromLeft, 4)
     }
 
+    /// On 2, which runs low; 1 has reset since, so 1 wins over 3.
+    func testAResetAccountAboveTheActiveOneIsPickedFirst() throws {
+        let view = try view([
+            account("a@x", used5h: 0, states: ["local": "stored"]),
+            account("b@x", used5h: 98, states: ["local": "active"]),
+            account("c@x", used5h: 0, states: ["local": "stored"]),
+        ])
+        XCTAssertEqual(AutoSwitch.plan(view, excluded: []).map(\.to), ["a@x"])
+    }
+
     func testWeeklyWindowAloneTriggersAtExactlyFivePercentLeft() throws {
         let view = try view([
             account("a@x", used5h: 0, usedWk: 95, states: ["local": "active"]),
