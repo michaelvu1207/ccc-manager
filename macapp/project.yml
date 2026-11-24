@@ -18,8 +18,8 @@ targets:
       path: CCC/Info.plist
       properties:
         CFBundleDisplayName: CCC Manager
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.22.2"
+        CFBundleVersion: "25"
         LSUIElement: true
         NSHumanReadableCopyright: ""
     settings:
@@ -30,3 +30,13 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: false
         ENABLE_APP_SANDBOX: false
+  CCCTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - CCCTests
+    dependencies:
+      - target: CCC
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true

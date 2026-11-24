@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "activeAccountNumber": 1,
+  "accounts": [
+    {
+      "number": 1,
+      "email": "user1@example.com",
+      "organizationName": "user1@example.com's Organization",
+      "organizationUuid": "00000000-0000-4000-8000-000000000001",
+      "isOrganization": true,
+      "active": true,
+      "usageStatus": "relogin_required",
+      "usage": null
+    },
+    {
+      "number": 2,
+      "email": "user2@example.com",
+      "organizationName": "user2@example.com's Organization",
+      "organizationUuid": "00000000-0000-4000-8000-000000000002",
+      "isOrganization": true,
+      "active": false,
+      "usageStatus": "relogin_required",
+      "usage": null
+    },
+    {
+      "number": 3,
+      "email": "user3@example.com",
+      "organizationName": "user3@example.com's Organization",
+      "organizationUuid": "00000000-0000-4000-8000-000000000003",
+      "isOrganization": true,
+      "active": false,
+      "usageStatus": "relogin_required",
+      "usage": null,
+      "lastGoodUsage": {
+        "fiveHour": {
+          "pct": 9.0,
+          "resetsAt": "2026-08-19T22:00:00.122100+00:00",
+          "countdown": "0m",
+          "clock": "Aug 19 15:00"
+        },
+        "sevenDay": {
+          "pct": 52.0,
+          "resetsAt": "2026-08-23T08:00:00.122122+00:00",
+          "countdown": "0m",
+          "clock": "Aug 23 01:00",
+          "expectedPct": 49.3,
+          "aheadOfPace": false,
+          "projectedExhaustionAt": "2026-08-22T23:12:09Z",
+          "willLastToReset": false
+        },
+        "scoped": [
+          {
+            "pct": 100.0,
+            "resetsAt": "2026-08-23T08:00:00.122335+00:00",
+            "countdown": "0m",
+            "clock": "Aug 23 01:00",
+            "expectedPct": 49.3,
+            "aheadOfPace": true,
+            "projectedExhaustionAt": "2026-08-19T18:47:07Z",
+            "willLastToReset": false,
+            "name": "Fable"
+          }
+        ]
+      },
+      "lastGoodFetchedAt": "2026-08-19T18:47:07Z",
+      "lastGoodAgeSeconds": 3045854.2
+    }
+  ],
+  "unclaimedCredentials": [
+    "20260101T000000-redacted",
+    "20260101T000001-redacted",
+    "20260101T000002-redacted",
+    "20260101T000003-redacted",
+    "20260101T000004-redacted",
+    "20260101T000005-redacted",
+    "20260101T000006-redacted",
+    "20260101T000007-redacted"
+  ]
+}

@@ -1,11 +1,11 @@
 [project]
 name = "ccc-manager"
-version = "0.16.0"
+version = "0.23.2"
 description = "A pretty terminal dashboard for switching between Claude Code and Codex accounts, with live usage and spend."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Michael Vu" }]
 keywords = ["claude", "codex", "tui", "account-switcher", "usage", "cli"]
 dependencies = []
@@ -20,9 +20,18 @@ ccc = "cccswitcher.cli:main"
 cccswitcher = "cccswitcher.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cccswitcher"]
 artifacts = ["cccswitcher/assets/*.png", "cccswitcher/assets/*.txt"]
+
+[tool.hatch.build]
+exclude = [
+  "/.omc",
+  "**/.omc",
+  "/macapp/build",
+  "**/*.profraw",
+  "**/*.xcresult",
+]

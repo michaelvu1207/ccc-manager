@@ -6,19 +6,24 @@ import SwiftUI
 struct UsageBar: View {
     let window: UsageWindow
 
-    private var color: Color {
-        guard let left = window.pctLeft else { return .secondary }
+    static func color(forLeft left: Double) -> Color {
         if left <= 10 { return .red }
         if left <= 30 { return .orange }
         return .green
     }
 
+    private var color: Color {
+        guard let left = window.pctLeft else { return .secondary }
+        return Self.color(forLeft: left)
+    }
+
     var body: some View {
         HStack(spacing: 6) {
+            // Wide enough for model-scoped window ids like "fable", not just "5h"/"wk".
             Text(window.id)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
-                .frame(width: 18, alignment: .leading)
+                .frame(width: 34, alignment: .leading)
 
             if let left = window.pctLeft {
                 Capsule()

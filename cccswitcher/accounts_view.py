@@ -1,0 +1,279 @@
+"""Account-centric view: one row per account, with its state on every machine.
+
+The same Claude or Codex account is often stored on several machines (each
+with its own login). This module merges the per-machine snapshots into one
+list keyed by identity — provider + email (+ organization for Claude) — and
+records, for every enabled machine, whether the account is the active login
+there, stored, stored but needing a login, absent, or unknown because the
+machine is offline.
+
+This module never moves credentials: "assigning" an account to a machine
+means switching to that machine's own stored login or starting a fresh
+/login there. Only shared-login sync (sync_hub / sync_agent) distributes
+logins, with a single refresher, because refresh tokens rotate.
+"""
+
+from __future__ import annotations
+
+import platform
+import re
+import time
+
+# Per-machine states, as shown on the app's machine chips. PENDING: a healthy
+# shared login whose usage is not measured yet (neutral, not "needs login").
+ACTIVE, STORED, NEEDS_LOGIN, ABSENT, OFFLINE = "active", "stored", "needs_login", "absent", "offline"
+PENDING = "pending"
+
+
+SHORT_MAX = 8
+_SEPARATORS = re.compile(r"[-_. ]+")
+
+
+def short_name(name: str, others: list[str] = ()) -> str:
+    """Compact column label for a machine name.
+
+    A prefix shared with another machine is dropped ("studio-a100" and
+    "studio-laptop" -> "a100", "laptop"); otherwise the first segment is
+    kept ("work-desktop" -> "work"). At most SHORT_MAX characters.
+    """
+    parts = [p for p in _SEPARATORS.split(name.strip()) if p]
+    if len(parts) < 2:
+        return name.strip()[:SHORT_MAX] or "?"
+    head = parts[0].lower()
+    shared = any(_SEPARATORS.split(o.strip())[0].lower() == head for o in others if o != name)
+    return ("-".join(parts[1:]) if shared else parts[0])[:SHORT_MAX]
+
+
+def short_names(shown: list[dict]) -> dict[str, str]:
+    """Column labels: the user's own, else "Mac" for this Mac, else derived; unique."""
+    names = [m.get("display_name") or m["id"] for m in shown if not m.get("local")]
+    out: dict[str, str] = {}
+    for m in shown:
+        name = m.get("display_name") or m["id"]
+        if m.get("short"):
+            label = str(m["short"])
+        elif m.get("local"):
+            label = "Mac" if (m.get("platform") or platform.system()) == "Darwin" else "here"
+        else:
+            label = short_name(name, names)
+        base, n = label, 2
+        while label in out.values():
+            label = f"{base[:SHORT_MAX - 1]}{n}"
+            n += 1
+        out[m["id"]] = label
+    return out
+
+
+def _identity(provider: str, acct: dict) -> tuple[str, str, str]:
+    return (provider, (acct.get("email") or "").strip().lower(), acct.get("org_uuid") or "")
+
+
+def _usage_rank(acct: dict) -> tuple[int, float]:
+    """Live usage beats last-known usage; then the newest measurement wins."""
+    if not acct.get("windows"):
+        return (-1, 0.0)
+    return (0 if acct.get("usage_stale") else 1, float(acct.get("usage_at") or 0))
+
+
+def _state(acct: dict | None, online: bool) -> str:
+    if not online:
+        return OFFLINE
+    if acct is None:
+        return ABSENT
+    if acct.get("active"):
+        return ACTIVE
+    if acct.get("needs_login"):
+        return NEEDS_LOGIN
+    return PENDING if acct.get("usage_pending") else STORED
+
+
+_UNIT_S = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+
+
+def _reset_epoch(window: dict, now: float) -> float | None:
+    """Absolute reset time of a usage window (resets_at, else parsed resets_in)."""
+    at = window.get("resets_at")
+    if isinstance(at, (int, float)) and at > 0:
+        return float(at)
+    text = (window.get("resets_in") or "").strip()
+    if text == "now":
+        return now
+    parts = re.findall(r"(\d+)\s*([dhms])", text)
+    return now + sum(int(n) * _UNIT_S[u] for n, u in parts) if parts else None
+
+
+def weekly_reset(windows: list[dict], now: float | None = None) -> float | None:
+    """When the account's weekly quota resets (its unused quota expires)."""
+    now = time.time() if now is None else now
+    weekly = [w for w in windows if w.get("id") in ("wk", "7d")]
+    times = [t for t in (_reset_epoch(w, now) for w in (weekly or windows)) if t is not None]
+    return min(times) if times else None
+
+
+def _sort_key(entry: dict) -> tuple:
+    """Claude, then Codex; within each, the weekly quota that resets soonest
+    first (use it before it expires). Reset times are fixed, so rows do not
+    move on refresh or when an account is switched; accounts without usage
+    go last, then by email."""
+    reset = entry.get("weekly_reset")
+    return (entry["provider"] != "claude", reset is None, reset or 0.0, entry["email"].lower(), entry["key"])
+
+
+def _sync_for(sync: dict | None, sync_names: dict[str, str], machine_id: str, key: str) -> dict | None:
+    """This machine's copy of a shared login vs the hub's generation."""
+    if not sync or not sync.get("enabled"):
+        return None
+    hub_account = (sync.get("accounts") or {}).get(key)
+    if not hub_account or not hub_account.get("shared", True) or hub_account.get("deleted"):
+        return None
+    report = (sync.get("machines") or {}).get(sync_names.get(machine_id, machine_id))
+    if report is None:
+        return {"state": "no_agent", "hub_generation": hub_account.get("generation", 0)}
+    generation = (report.get("generations") or {}).get(key)
+    in_sync = generation == hub_account.get("generation", 0)
+    return {"state": "in_sync" if in_sync else "behind", "generation": generation,
+            "hub_generation": hub_account.get("generation", 0), "last_sync": report.get("last_sync")}
+
+
+def build(machines: list[dict], sync: dict | None = None, sync_names: dict[str, str] | None = None) -> dict:
+    """Merge snapshot `machines` entries into the account-centric view.
+
+    `machines` are snapshot machine payloads (see snapshot.machine_payload).
+    Duplicates (duplicate_of set) are skipped: their accounts are the same
+    as their twin's. Returns {"machines": [...], "accounts": [...]}.
+    """
+    shown = [m for m in machines if not m.get("duplicate_of")]
+    groups: dict[tuple[str, str, str], dict] = {}
+    order: list[tuple[str, str, str]] = []
+
+    for m in shown:
+        for provider in m.get("providers") or []:
+            pid = provider.get("id")
+            for acct in provider.get("accounts") or []:
+                key = _identity(pid, acct)
+                if not key[2]:
+                    # No org on this machine's record: join the only group
+                    # with the same email, if there is exactly one.
+                    same = [k for k in groups if k[:2] == key[:2]]
+                    if len(same) == 1:
+                        key = same[0]
+                elif (pid, key[1], "") in groups:
+                    groups[key] = groups.pop((pid, key[1], ""))
+                    order[order.index((pid, key[1], ""))] = key
+                if key not in groups:
+                    groups[key] = {"provider": pid, "records": {}}
+                    order.append(key)
+                groups[key]["records"][m["id"]] = acct
+
+    accounts = []
+    for key in order:
+        group = groups[key]
+        records: dict[str, dict] = group["records"]
+        best_mid, best = max(records.items(), key=lambda kv: _usage_rank(kv[1]))
+        first = next(iter(records.values()))
+        # The hub could not refresh this shared login. A machine with a newer,
+        # working copy would have uploaded it (the hub adopts newer copies), so
+        # every stored or pending copy is dead too and needs a fresh login.
+        hub_dead = bool(((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("refresh_error"))
+        per_machine = {}
+        for m in shown:
+            acct = records.get(m["id"])
+            online = bool(m.get("online")) and bool(m.get("has_data", True))
+            entry = {"state": _state(acct, online)}
+            if hub_dead and entry["state"] in (PENDING, STORED):
+                entry["state"] = NEEDS_LOGIN
+            if acct is not None:
+                entry["num"] = acct.get("num")
+                entry["query"] = acct.get("num") if group["provider"] == "claude" else acct.get("email")
+                entry["disabled"] = bool(acct.get("disabled"))
+                if acct.get("usage_pending") and acct.get("status_message"):
+                    entry["note"] = acct["status_message"]
+            if not online:
+                entry["last_state"] = _state(acct, True) if m.get("has_data") else "unknown"
+            synced = _sync_for(sync, sync_names or {}, m["id"], "|".join(key))
+            if synced is not None:
+                entry["sync"] = synced
+            per_machine[m["id"]] = entry
+        stored_on = [mid for mid in records]
+        disabled_on = [mid for mid, acct in records.items() if acct.get("disabled")]
+        has_usage = bool(best.get("windows"))
+        accounts.append({
+            "key": "|".join(key),
+            "provider": group["provider"],
+            "email": first.get("email") or "unknown",
+            "alias": next((a.get("alias") for a in records.values() if a.get("alias")), ""),
+            "label": best.get("label") or first.get("label") or first.get("email"),
+            "org_name": next((a.get("org_name") for a in records.values() if a.get("org_name")), ""),
+            "plan": next((a.get("plan") for a in records.values() if a.get("plan")), ""),
+            "windows": (best.get("windows") or []) if has_usage else [],
+            "weekly_reset": weekly_reset(best.get("windows") or []) if has_usage else None,
+            "usage_stale": bool(best.get("usage_stale")) if has_usage else False,
+            "usage_from": best_mid if has_usage else None,
+            "usage_at": best.get("usage_at") if has_usage else None,
+            "status_message": "" if has_usage else (
+                "needs login: the hub cannot refresh this login" if hub_dead else next(
+                    (a.get("status_message") for a in records.values() if a.get("status_message")), "")),
+            "needs_login": hub_dead or all(a.get("needs_login") for a in records.values()),
+            # A healthy shared login whose usage is not read yet (neutral).
+            "usage_pending": not has_usage and not hub_dead
+            and any(a.get("usage_pending") for a in records.values()),
+            "disabled": bool(disabled_on) and len(disabled_on) == len(stored_on),
+            "disabled_on": disabled_on,
+            "active_on": [mid for mid, acct in records.items() if acct.get("active")],
+            "stored_on": stored_on,
+            "machines": per_machine,
+            # Shared-login sync: None = sync off / not a hub account.
+            "shared": _shared(sync, "|".join(key)),
+            "hub_generation": ((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("generation"),
+            "refresh_error": ((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("refresh_error", ""),
+            # Deleted on the hub (0.22): copies left on machines the agents
+            # could not clean (the live login, older agents, no agent).
+            "hub_deleted": bool(((sync or {}).get("accounts") or {}).get("|".join(key), {}).get("deleted")),
+            # Consumable limit resets (Codex since 0.17, Claude since 0.22.3), when present.
+            "consumable_resets": next((r.get("consumable_resets") for r in records.values()
+                                       if r.get("consumable_resets") is not None), None),
+            "consumable_reset_credits": next((r.get("consumable_reset_credits") for r in records.values()
+                                              if r.get("consumable_reset_credits")), []),
+        })
+    accounts.sort(key=_sort_key)
+    shorts = short_names(shown)
+
+    return {
+        "generated_at": time.time(),
+        "machines": [
+            {
+                "id": m["id"],
+                "name": m.get("display_name") or m["id"],
+                "short_name": shorts[m["id"]],
+                "platform": m.get("platform") or "",
+                "local": bool(m.get("local")),
+                "online": bool(m.get("online")),
+                "engine": m.get("engine") or "",
+            }
+            for m in shown
+        ],
+        "accounts": accounts,
+    }
+
+
+def _shared(sync: dict | None, key: str) -> bool | None:
+    if not sync or not sync.get("enabled"):
+        return None
+    if not key.startswith(("claude|", "codex|")):
+        return None  # Claude logins, and Codex ChatGPT logins since 0.23
+    account = (sync.get("accounts") or {}).get(key)
+    if account is not None and account.get("deleted"):
+        return None  # deleted on the hub: no share toggle, only a login brings it back
+    return True if account is None else bool(account.get("shared", True))
+
+
+def find(view: dict, query: str, provider: str | None = None) -> list[dict]:
+    """Accounts matching an account key (provider|email|org), an email
+    (exact, then substring) or an alias. A key picks one of two accounts
+    with the same email in different organizations."""
+    q = query.strip().lower()
+    pool = [a for a in view["accounts"] if provider in (None, a["provider"])]
+    if q.count("|") == 2:
+        return [a for a in pool if a["key"].lower() == q]
+    exact = [a for a in pool if q in (a["email"].lower(), (a["alias"] or "").lower())]
+    return exact or [a for a in pool if q in a["email"].lower()]
