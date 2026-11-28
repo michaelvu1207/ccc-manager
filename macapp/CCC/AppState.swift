@@ -517,6 +517,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Accounts CCC stores whose login is dead and that are not in the proxy.
+    func deadAccountsOutsideProxy(_ provider: String) -> [ViewAccount] {
+        let inProxy = Set((proxy?.rows(provider) ?? []).map { $0.email.lowercased() })
+        return (view?.accounts ?? []).filter {
+            $0.provider == provider && $0.needsLogin && $0.hubDeleted != true
+                && !inProxy.contains($0.email.lowercased())
+        }
+    }
+
     func setProxyAccount(_ account: ProxyStatus.Account, on: Bool) {
         pendingProxyAccount = account.id
         Task {

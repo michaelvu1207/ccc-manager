@@ -120,6 +120,14 @@ struct ProxyDashboard: View {
                             .padding(.horizontal, 8)
                         ForEach(rows) { card($0) }
                     }
+                    let dead = state.deadAccountsOutsideProxy(provider)
+                    if rows.isEmpty && !dead.isEmpty {
+                        Text(provider.uppercased())
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                    }
+                    ForEach(dead) { deadCard($0) }
                 }
                 if (proxy.accounts ?? [:]).isEmpty {
                     Text("No reading yet. The cap guard on the proxy host has not run.")
@@ -233,6 +241,34 @@ struct ProxyDashboard: View {
                 }
                 .controlSize(.small)
             }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
+    /// An account CCC knows whose login stopped working, so it is not in the
+    /// proxy. One login puts it there.
+    private func deadCard(_ account: ViewAccount) -> some View {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(account.email)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                Text("not in the proxy · needs login")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+            Spacer(minLength: 4)
+            Button {
+                state.logInToProxy(provider: account.provider)
+            } label: {
+                Label("Log in", systemImage: "person.badge.key")
+            }
+            .controlSize(.small)
+            .help("Opens Terminal: sign in as \(account.email) in this Mac's browser. "
+                  + "The login is saved in the proxy.")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
