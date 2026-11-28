@@ -452,6 +452,46 @@ which can read the login keychain) and a `systemd --user` unit on Linux
 without a login). Over plain ssh, `install-agent` fills in
 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS` for `systemctl --user` itself. Remove them with `ccc sync uninstall`.
 
+## Proxy mode (CLIProxyAPI)
+
+A second way to use many accounts. With sync, each machine has its own login and CCC changes
+which account it is. In proxy mode one [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+server on one machine (the proxy host) holds every login, refreshes them, and selects an account
+for each request. Each machine is a client with one key, so there is nothing to switch.
+
+One owner for each login: an account that is in the proxy must not be shared through `ccc sync`
+at the same time (`ccc sync share EMAIL --off` first), or the two refreshers break each other's copy.
+
+```bash
+# on the proxy host (CLIProxyAPI installed in ~/.local/opt/cliproxyapi, management key in
+# management.key there, `routing.session-affinity: true` in its config.yaml)
+ccc proxy guard --install     # caps: turns an account off at its cap, on again after the reset
+ccc proxy on                  # this machine's Claude Code and Codex use the proxy
+
+# on every other machine (needs ssh to the host)
+ccc proxy on --host studio-laptop
+ccc proxy status              # usage and state of every account in the proxy
+ccc proxy login claude        # add or renew a login; the browser opens on THIS machine
+ccc proxy off                 # back to this machine's own login
+```
+
+- **Caps.** The proxy has no cap of its own, and a Codex account with credits does not refuse
+  calls at 100 %: it spends credits. The guard reads each account's usage every 2 minutes and
+  turns it off at 95 % (Claude) or 99 % (Codex) of the week, or 98 % of the 5-hour window. A
+  Claude account at its Fable cap only loses the Fable models. An account whose usage cannot be
+  read for 15 minutes is turned off. The guard only undoes what it did itself. Change the numbers
+  in `~/.config/ccc/proxy.json` (`caps`, `short_cap`, `interval`, `unknown_after`).
+- **Same account for a session, spread across sessions.** With session affinity on, the proxy
+  keeps one session on one account (which keeps the prompt cache) and spreads sessions across
+  accounts. Claude Code and Codex send a session id by themselves; your own scripts send an
+  `X-Session-ID` header.
+- **What `ccc proxy on` changes.** `env` in Claude Code's `settings.json`
+  (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`) and a marked provider block in Codex's
+  `config.toml`. Apps that start those tools follow. Both files are backed up once
+  (`*.pre-ccc-proxy`).
+- **What you lose.** `/usage` in Claude Code and claude.ai connectors do not work through a
+  proxy; `ccc proxy status` replaces the first.
+
 ## Machines
 
 CCC shows this Mac plus any SSH host you can reach with

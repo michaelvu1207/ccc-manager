@@ -18,12 +18,14 @@ from xml.sax.saxutils import escape
 
 ROLES = ("hub", "agent")
 AUTOSWITCH = "autoswitch"
+PROXY_GUARD = "proxy-guard"
 LABEL = "dev.maikyon.ccc.{name}"
 # role -> (unit name, ccc arguments, description)
 _SERVICES = {
     "hub": ("sync-hub", ("sync", "hub"), "CCC shared-login sync hub"),
     "agent": ("sync-agent", ("sync", "agent"), "CCC shared-login sync agent"),
     AUTOSWITCH: ("autoswitch", ("auto", "claude"), "CCC Claude auto-switch"),
+    PROXY_GUARD: ("proxy-guard", ("proxy", "guard"), "CCC proxy cap guard"),
 }
 
 

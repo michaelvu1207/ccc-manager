@@ -1278,6 +1278,9 @@ def main(argv: list[str] | None = None) -> int:
                              help="Apply --install / --uninstall / --status on these machines (repeatable)")
     auto_parser.set_defaults(func=cmd_auto)
 
+    from . import proxy
+    proxy.add_parser(sub)
+
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
         # Bare `ccc`: interactive TUI on a terminal, plain list otherwise.
