@@ -471,7 +471,16 @@ def cmd_login(args) -> int:
     config = load_config()
     if config.get("host"):
         print(f"Open the URL below in this machine's browser. The login is saved in the proxy on {config['host']}.")
-    return subprocess.call(login_command(config, args.provider))
+    code = subprocess.call(login_command(config, args.provider))
+    # Read the new login's usage now, so every view shows it at once (not at the next guard round).
+    try:
+        if config.get("host"):
+            _ssh(config["host"], "ccc proxy guard --once >/dev/null", timeout=60)
+        else:
+            guard_round(config)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return code
 
 
 def find_account(config: dict, email: str, provider: str | None) -> dict:

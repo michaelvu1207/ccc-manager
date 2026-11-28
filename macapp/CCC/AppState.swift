@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     @Published var showingDirectLogins = false
     private let client = CCCClient.shared
     private var refreshTimer: Timer?
+    private var proxyTimer: Timer?
 
     static let refreshInterval: TimeInterval = 300
     private static let collapsedKey = "collapsedMachines"
@@ -61,6 +62,10 @@ final class AppState: ObservableObject {
             await loadCached()
             await refresh()
             await loadAutoSwitch()
+        }
+        // The proxy reading is one fast call: keep it fresh between full refreshes.
+        proxyTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            Task { await self?.refreshProxy() }
         }
         refreshTimer = Timer.scheduledTimer(
             withTimeInterval: Self.refreshInterval, repeats: true
