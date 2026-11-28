@@ -474,6 +474,34 @@ def cmd_login(args) -> int:
     return subprocess.call(login_command(config, args.provider))
 
 
+def find_account(config: dict, email: str, provider: str | None) -> dict:
+    found = [a for a in accounts(config) if a["email"] == email and provider in (None, a["provider"])]
+    if not found:
+        raise ValueError("the proxy has no such account")
+    if len(found) > 1:
+        raise ValueError("this email has a Claude and a Codex account: add --provider")
+    return found[0]
+
+
+def cmd_set(args) -> int:
+    """Turn one account off or on by hand. The guard leaves a hand-made "off" alone."""
+    config = load_config()
+    verb = "disable" if args.disabled else "enable"
+    try:
+        if config.get("host"):
+            extra = f" --provider {args.provider}" if args.provider else ""
+            _ssh(config["host"], f"ccc proxy {verb} {shlex.quote(args.email)}{extra}", timeout=60)
+        else:
+            account = find_account(config, args.email, args.provider)
+            _management(config, "auth-files/status", {"name": account["name"], "disabled": args.disabled})
+            guard_round(config)  # the reading shows the change now, and a cap still applies
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"ccc proxy {verb}: {_EMAIL.sub('<account>', str(exc))}", file=sys.stderr)
+        return 1
+    print("off" if args.disabled else "on (the guard turns it off again if it is at a cap)")
+    return 0
+
+
 def cmd_key(args) -> int:
     """(internal) client key and public URL into a pipe, for `ccc proxy on --host`."""
     if sys.stdout.isatty():
@@ -533,6 +561,11 @@ def add_parser(sub) -> None:
     p.set_defaults(func=cmd_on)
     p = psub.add_parser("off", help="Go back to this machine's own logins")
     p.set_defaults(func=cmd_off)
+    for verb, off in (("disable", True), ("enable", False)):
+        p = psub.add_parser(verb, help=f"Turn one account {'off' if off else 'on'} in the proxy")
+        p.add_argument("email")
+        p.add_argument("--provider", choices=sorted(LOGIN_PORTS))
+        p.set_defaults(func=cmd_set, disabled=off)
     p = psub.add_parser("key", help="(internal) print the client key into a pipe")
     p.set_defaults(func=cmd_key)
     parser.set_defaults(func=cmd_status, json=False)

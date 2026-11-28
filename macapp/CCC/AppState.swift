@@ -38,6 +38,11 @@ final class AppState: ObservableObject {
 
     @Published var proxy: ProxyStatus?
     @Published var proxyError: String?
+    /// Proxy account (its id) with an on/off change in flight.
+    @Published private(set) var pendingProxyAccount: String?
+    @Published private(set) var proxyPointBusy = false
+    /// Proxy mode: the old per-machine login view is shown on request only.
+    @Published var showingDirectLogins = false
     private let client = CCCClient.shared
     private var refreshTimer: Timer?
 
@@ -94,6 +99,11 @@ final class AppState: ObservableObject {
     // MARK: - Menu bar label
 
     var menuBarTitle: String {
+        if Self.proxyConfigured {
+            guard let proxy else { return "" }
+            if proxy.rows("claude").contains(where: { $0.state == .needsLogin }) { return "!" }
+            return proxy.capacity("claude").map { "\(Int($0))%" } ?? "0"
+        }
         guard let active = (localMachine?.provider("claude") ?? snapshot?.provider("claude"))?
             .activeAccount else { return "" }
         if active.needsLogin { return "!" }
@@ -102,6 +112,12 @@ final class AppState: ObservableObject {
     }
 
     var menuBarSymbol: String {
+        if Self.proxyConfigured {
+            let rows = proxy?.rows("claude") ?? []
+            let bad = proxy != nil && (!rows.contains(where: \.takesRequests)
+                                       || rows.contains { $0.state == .needsLogin })
+            return bad ? "exclamationmark.triangle.fill" : "circle.lefthalf.filled"
+        }
         let active = localMachine?.provider("claude")?.activeAccount
         if active?.needsLogin == true { return "exclamationmark.triangle.fill" }
         return "circle.lefthalf.filled"
@@ -144,7 +160,11 @@ final class AppState: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
         if machines.isEmpty { await loadCached() }
-        let ids = machines.map(\.id)
+        // Proxy mode: the proxy owns the accounts; probe only this Mac (its
+        // cost report) unless the direct-login view is open.
+        let ids = machines.map(\.id).filter {
+            !Self.proxyConfigured || showingDirectLogins || $0 == localMachine?.id
+        }
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.refreshProxy() }  // one fast call; not behind the machine probes
             for id in ids {
@@ -487,6 +507,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshProxy() async {
+        // `ccc proxy off` keeps the settings file, so the dashboard stays.
         guard Self.proxyConfigured, !Self.isRunningTests else { return }
         do {
             proxy = try await client.proxyStatus()
@@ -494,6 +515,30 @@ final class AppState: ObservableObject {
         } catch {
             proxyError = error.localizedDescription
         }
+    }
+
+    func setProxyAccount(_ account: ProxyStatus.Account, on: Bool) {
+        pendingProxyAccount = account.id
+        Task {
+            do {
+                try await client.proxySet(email: account.email, provider: account.provider, on: on)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            await refreshProxy()
+            pendingProxyAccount = nil
+        }
+    }
+
+    func setThisMacUsesProxy(_ on: Bool) async {
+        proxyPointBusy = true
+        defer { proxyPointBusy = false }
+        do {
+            try await client.proxyPoint(on: on)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        await refreshProxy()
     }
 
     /// "Log in to proxy": the login is saved in the proxy, for every machine.

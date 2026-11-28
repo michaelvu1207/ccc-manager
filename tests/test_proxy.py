@@ -121,6 +121,15 @@ class Guard(unittest.TestCase):
         self.round(3000)
         self.assertEqual(self.calls[-1], ("auth-files/status", {"name": "x.json", "disabled": False}))
 
+    def test_find_account_needs_a_provider_when_the_email_has_two(self):
+        self.account("claude-a.json", email="a@x.io")
+        self.account("codex-a.json", provider="codex", email="a@x.io")
+        with self.assertRaises(ValueError):
+            proxy.find_account(self.config, "a@x.io", None)
+        self.assertEqual(proxy.find_account(self.config, "a@x.io", "codex")["name"], "codex-a.json")
+        with self.assertRaises(ValueError):
+            proxy.find_account(self.config, "b@x.io", None)
+
     def test_state_file_holds_no_token(self):
         self.account("a.json")
         self.readings["a.json"] = usage(("week", "week", 10, 5000))

@@ -82,9 +82,12 @@ struct PopoverView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     if AppState.proxyConfigured {
-                        ProxySection()
+                        ProxyDashboard()
+                        directLoginsToggle
                     }
-                    if let view = state.view {
+                    if AppState.proxyConfigured && !state.showingDirectLogins {
+                        EmptyView()
+                    } else if let view = state.view {
                         accountList(view)
                     } else {
                         // ccc < 0.19: no account view, show machine groups.
@@ -134,6 +137,24 @@ struct PopoverView: View {
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 8)
         }
+    }
+
+    /// Proxy mode: the per-machine logins (accounts the proxy cannot use, and
+    /// the fallback when the proxy is down) stay one click away.
+    private var directLoginsToggle: some View {
+        Button {
+            state.showingDirectLogins.toggle()
+            if state.showingDirectLogins { Task { await state.refresh() } }
+        } label: {
+            Label(state.showingDirectLogins ? "Hide the machines' own logins" : "Show the machines' own logins",
+                  systemImage: state.showingDirectLogins ? "chevron.down" : "chevron.right")
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.top, 2)
+        .help("Logins that are not in the proxy: accounts it cannot use, and each machine's fallback.")
     }
 
     /// One button for the whole flow: sign in on this Mac, shared everywhere.
@@ -199,6 +220,7 @@ struct PopoverView: View {
 
             Spacer()
 
+            if oldControls {
             Toggle("auto-switch", isOn: Binding(
                 get: { state.autoSwitchOn },
                 set: { on in Task { await state.setAutoSwitch(on) } }
@@ -210,6 +232,7 @@ struct PopoverView: View {
             .help("Switch Claude accounts on every machine when the active one has "
                   + "\(state.autoSwitchPercentLeft.usage)% or less left (5h or weekly), "
                   + "or \(state.autoSwitchPercentLeft.fable)% or less Fable left. Details: Machines.")
+            }
 
             Toggle("start at login", isOn: Binding(
                 get: { state.launchAtLogin },
@@ -219,6 +242,7 @@ struct PopoverView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
+            if oldControls || state.showingMachines {
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) { state.showingMachines.toggle() }
             } label: {
@@ -228,6 +252,7 @@ struct PopoverView: View {
             .foregroundStyle(state.showingMachines ? Color.accentColor : .secondary)
             .help(state.showingMachines ? "Back to accounts" : "Machines")
             .accessibilityLabel(state.showingMachines ? "Back to accounts" : "Machines")
+            }
 
             Button {
                 NSApplication.shared.terminate(nil)
@@ -241,6 +266,9 @@ struct PopoverView: View {
         .padding(.horizontal, 8)
         .padding(.bottom, 2)
     }
+
+    /// Auto-switch and the machine manager belong to the per-machine logins.
+    private var oldControls: Bool { !AppState.proxyConfigured || state.showingDirectLogins }
 
     private var refreshedCaption: String {
         guard let last = state.lastRefreshed else { return "refresh" }

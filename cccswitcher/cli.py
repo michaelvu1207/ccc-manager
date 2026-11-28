@@ -1285,7 +1285,8 @@ def main(argv: list[str] | None = None) -> int:
     if not getattr(args, "func", None):
         # Bare `ccc`: interactive TUI on a terminal, plain list otherwise.
         default = "tui" if sys.stdout.isatty() and sys.stdin.isatty() else "list"
-        args = parser.parse_args([default])
+        # Proxy mode: the proxy owns the accounts, so its view is the default.
+        args = parser.parse_args(["proxy", "status"] if proxy.config_path().exists() else [default])
     return args.func(args)
 
 

@@ -181,6 +181,19 @@ actor CCCClient {
         return try JSONDecoder().decode(ProxyStatus.self, from: data)
     }
 
+    /// Turn one proxy account off or on by hand.
+    func proxySet(email: String, provider: String, on: Bool) async throws {
+        _ = try await runCCC(
+            arguments: ["proxy", on ? "enable" : "disable", "--provider", provider, "--", email],
+            timeout: 90, key: "proxy"
+        )
+    }
+
+    /// Point this Mac's Claude Code and Codex at the proxy, or back.
+    func proxyPoint(on: Bool) async throws {
+        _ = try await runCCC(arguments: ["proxy", on ? "on" : "off"], timeout: 60, key: "proxy")
+    }
+
     func machineList() async throws -> MachineList {
         let data = try await runCCC(arguments: ["machines", "list", "--json"], timeout: 15, key: "config")
         return try JSONDecoder().decode(MachineList.self, from: data)
