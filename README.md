@@ -489,6 +489,10 @@ ccc proxy off                 # back to this machine's own login
   (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`) and a marked provider block in Codex's
   `config.toml`. Apps that start those tools follow. Both files are backed up once
   (`*.pre-ccc-proxy`).
+- **In the Mac app.** When this Mac is set up for the proxy, the Accounts tab starts with a
+  "Log in to proxy" menu (Claude or Codex; it opens Terminal and runs `ccc proxy login`) and one
+  line for each account in the proxy: week left and state. An account whose login no longer
+  works shows "needs login" with a Re-login button.
 - **What you lose.** `/usage` in Claude Code and claude.ai connectors do not work through a
   proxy; `ccc proxy status` replaces the first.
 

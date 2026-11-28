@@ -36,6 +36,8 @@ final class AppState: ObservableObject {
     @Published private(set) var autoSwitch: [AutoSwitchMachine]?
     @Published private(set) var autoSwitchBusy = false
 
+    @Published var proxy: ProxyStatus?
+    @Published var proxyError: String?
     private let client = CCCClient.shared
     private var refreshTimer: Timer?
 
@@ -144,6 +146,7 @@ final class AppState: ObservableObject {
         if machines.isEmpty { await loadCached() }
         let ids = machines.map(\.id)
         await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.refreshProxy() }  // one fast call; not behind the machine probes
             for id in ids {
                 group.addTask { await self.refresh(machineID: id) }
             }
@@ -474,6 +477,34 @@ final class AppState: ObservableObject {
                 await refresh()
             }
         }
+    }
+
+    /// Proxy mode is set up on this Mac (`ccc proxy on` wrote the settings file).
+    static var proxyConfigured: Bool {
+        let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+            ?? (NSHomeDirectory() + "/.config")
+        return FileManager.default.fileExists(atPath: base + "/ccc/proxy.json")
+    }
+
+    func refreshProxy() async {
+        guard Self.proxyConfigured, !Self.isRunningTests else { return }
+        do {
+            proxy = try await client.proxyStatus()
+            proxyError = nil
+        } catch {
+            proxyError = error.localizedDescription
+        }
+    }
+
+    /// "Log in to proxy": the login is saved in the proxy, for every machine.
+    func logInToProxy(provider: String) {
+        do {
+            try LoginLauncher.openProxyLogin(provider: provider)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        refreshSoon()
     }
 
     /// Sync is set up, so a login on this Mac reaches every machine.

@@ -436,10 +436,11 @@ def cmd_status(args) -> int:
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"ccc proxy: {exc}", file=sys.stderr)
         return 1
-    if args.json:
-        print(json.dumps(state))
-        return 0
     here = pointed()
+    if args.json:
+        # `client` is this machine's own setup (the host's copy is replaced).
+        print(json.dumps({**state, "client": {"host": config.get("host"), **here}}))
+        return 0
     where = config.get("host") or "this machine"
     print(f"Proxy host: {where}    This machine: Claude Code {'-> ' + here['claude'] if here['claude'] else 'direct'}, "
           f"Codex {'-> proxy' if here['codex'] else 'direct'}")

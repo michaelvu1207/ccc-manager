@@ -24,6 +24,16 @@ enum LoginLauncher {
         return args
     }
 
+    /// Proxy mode: add or renew a login in the proxy (`ccc proxy login`). The
+    /// browser opens on this Mac; over SSH the callback goes through a tunnel.
+    static func openProxyLogin(provider: String) throws {
+        try openTerminal(cccArguments: proxyLoginArguments(provider: provider), name: "ccc-proxy-login")
+    }
+
+    static func proxyLoginArguments(provider: String) -> [String] {
+        ["proxy", "login", provider]
+    }
+
     /// Log in a new Claude account on a machine, then `cswap add` it.
     static func openAddAccount(machine: String) throws {
         try openTerminal(cccArguments: ["add-account", "--machine", machine], name: "ccc-add-account")

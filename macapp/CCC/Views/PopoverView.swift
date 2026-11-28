@@ -81,6 +81,9 @@ struct PopoverView: View {
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
+                    if AppState.proxyConfigured {
+                        ProxySection()
+                    }
                     if let view = state.view {
                         accountList(view)
                     } else {

@@ -175,6 +175,12 @@ actor CCCClient {
         return try JSONDecoder().decode(AutoSwitchList.self, from: data)
     }
 
+    /// Proxy mode: the cap guard's last reading (`ccc proxy status --json`).
+    func proxyStatus() async throws -> ProxyStatus {
+        let data = try await runCCC(arguments: ["proxy", "status", "--json"], timeout: 40, key: "proxy")
+        return try JSONDecoder().decode(ProxyStatus.self, from: data)
+    }
+
     func machineList() async throws -> MachineList {
         let data = try await runCCC(arguments: ["machines", "list", "--json"], timeout: 15, key: "config")
         return try JSONDecoder().decode(MachineList.self, from: data)
